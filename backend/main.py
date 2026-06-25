@@ -11,6 +11,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from direction import interpret
+
 # The application object. Everything attaches to this.
 app = FastAPI()
 
@@ -25,10 +27,12 @@ app.add_middleware(
 )
 
 
-# Describes the shape of the data the frontend sends us: a JSON object with
-# one field, "text". FastAPI uses this to validate incoming requests.
+# Describes the shape of the data the frontend sends us: the line to read, and
+# an optional plain-English direction. Direction defaults to "" so a request
+# with no direction still works exactly like Step 1.
 class SpeakRequest(BaseModel):
     text: str
+    direction: str = ""
 
 
 # A simple health check. Visiting http://localhost:8000/ should return this,
@@ -38,8 +42,14 @@ def root():
     return {"status": "ok", "message": "Cue backend is running"}
 
 
-# The main endpoint. The frontend POSTs a line here; we echo it back so the
-# frontend knows the round trip succeeded, then it speaks the line.
+# The main endpoint. The frontend POSTs a line plus an optional direction. We
+# interpret the direction into voice settings and return them alongside the
+# line, so the frontend can both apply the settings and show what matched.
 @app.post("/speak")
 def speak(request: SpeakRequest):
-    return {"received": request.text}
+    result = interpret(request.direction)
+    return {
+        "received": request.text,
+        "settings": result["settings"],
+        "matched": result["matched"],
+    }

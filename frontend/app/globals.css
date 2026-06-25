@@ -1,8 +1,10 @@
 @import "tailwindcss";
 
+/* Cue is a studio control room: the theme is locked to dark, on purpose, so it
+   doesn't flip with the OS light/dark setting. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0a0a0b;
+  --foreground: #f4f4f5;
 }
 
 @theme inline {
@@ -12,15 +14,28 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* Equalizer bars under the Play button. They animate only while speaking, to
+   give visual feedback that the voice is playing. */
+@keyframes cue-eq {
+  0%,
+  100% {
+    transform: scaleY(0.18);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* Accessibility: people who prefer reduced motion get still bars, not a dance. */
+@media (prefers-reduced-motion: reduce) {
+  .cue-eq-bar {
+    animation: none !important;
+    transform: scaleY(0.4) !important;
+  }
 }

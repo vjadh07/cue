@@ -1,0 +1,3 @@
+# Extra packages used only for development/testing (not needed to run the app).
+# Install with: venv/bin/python -m pip install -r requirements-dev.txt
+pytest
