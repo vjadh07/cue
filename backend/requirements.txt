@@ -1,2 +1,6 @@
 fastapi
 uvicorn[standard]
+piper-tts
+
+# After installing, download the Piper voice model into backend/voices/ with:
+#   venv/bin/python -m piper.download_voices en_US-lessac-medium --download-dir voices

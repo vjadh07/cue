@@ -1,24 +1,26 @@
-"""Cue backend — Step 1.
+"""Cue backend.
 
-A tiny FastAPI server. Its only job right now is to prove the pipe between
-the frontend and the backend works: the frontend sends a line of text, this
-server receives it and sends a confirmation back. The actual speaking happens
-in the browser for now. In Step 3, this same endpoint is where real audio
-(from ElevenLabs) will come back instead.
+Receives a line plus an optional plain-English direction, interprets the
+direction into voice settings (Step 2), then generates real audio for the line
+(Step 3) and serves it back. Renders are cached on disk and keyed by their
+inputs, so an identical line is reused instead of re-generated.
 """
 
-from fastapi import FastAPI
+import re
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from cache import AudioCache
 from direction import interpret
+from providers import PiperProvider
 
-# The application object. Everything attaches to this.
 app = FastAPI()
 
-# The frontend runs on a different address (localhost:3000) than this backend
-# (localhost:8000). Browsers block cross-address requests by default, so we
-# explicitly allow the frontend to talk to us. This is CORS.
+# Allow the frontend (a different address) to call this backend.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -26,30 +28,59 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# The voice engine and the on-disk audio cache. (audio_cache/ is git-ignored.)
+provider = PiperProvider()
+cache = AudioCache(Path(__file__).parent / "audio_cache")
 
-# Describes the shape of the data the frontend sends us: the line to read, and
-# an optional plain-English direction. Direction defaults to "" so a request
-# with no direction still works exactly like Step 1.
+# Only ever serve files whose names look like our own hashes, never arbitrary
+# paths — this stops requests like /audio/../../secret.
+SAFE_AUDIO_NAME = re.compile(r"[a-f0-9]{64}\.(wav|mp3)")
+
+
 class SpeakRequest(BaseModel):
     text: str
     direction: str = ""
 
 
-# A simple health check. Visiting http://localhost:8000/ should return this,
-# which is an easy way to confirm the server is alive.
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Cue backend is running"}
 
 
-# The main endpoint. The frontend POSTs a line plus an optional direction. We
-# interpret the direction into voice settings and return them alongside the
-# line, so the frontend can both apply the settings and show what matched.
 @app.post("/speak")
 def speak(request: SpeakRequest):
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    # 1. Turn the direction into settings (Step 2 logic, unchanged).
     result = interpret(request.direction)
+    speed = result["settings"]["speed"]
+
+    # 2. Look this render up in the cache. A hit means no synthesis at all.
+    audio_id = cache.key(provider.name, speed, text)
+    if cache.has(audio_id, provider.ext):
+        cached = True
+    else:
+        cache.write(audio_id, provider.ext, provider.synthesize(text, speed))
+        cached = False
+
     return {
-        "received": request.text,
+        "audio_id": audio_id,
+        "ext": provider.ext,
+        "engine": provider.name,
+        "cached": cached,
         "settings": result["settings"],
         "matched": result["matched"],
     }
+
+
+@app.get("/audio/{filename}")
+def get_audio(filename: str):
+    if not SAFE_AUDIO_NAME.fullmatch(filename):
+        raise HTTPException(status_code=404, detail="not found")
+    audio_path = cache.cache_dir / filename
+    if not audio_path.exists():
+        raise HTTPException(status_code=404, detail="not found")
+    media_type = "audio/wav" if filename.endswith(".wav") else "audio/mpeg"
+    return FileResponse(audio_path, media_type=media_type)

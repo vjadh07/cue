@@ -1,29 +1,37 @@
-// This page needs state, a click handler, fetch, and the browser's speech
-// API — all browser-only things — so it must be a Client Component.
+// This page needs state, a click handler, fetch, and an audio element — all
+// browser-only things — so it must be a Client Component.
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
-// Where the Python backend is listening. For Step 2 this is hard-coded; later
-// we can move it to an environment variable.
+// Where the Python backend is listening. For now this is hard-coded.
 const BACKEND_URL = "http://localhost:8000";
 
-// What the screen can be doing at any moment.
+// What the screen can be doing at any moment. "connecting" now also covers the
+// backend rendering the audio, so we label it "Rendering…".
 type Status = "idle" | "connecting" | "speaking" | "error";
 
-// The voice knobs the backend returns, with the safe ranges it clamps to.
-// We use the ranges to draw each meter's fill.
+// The voice knobs. Speed is baked into the generated audio; volume is applied
+// here at playback; pitch is no longer used by the real engines.
 type Settings = { speed: number; pitch: number; volume: number };
 
 const NEUTRAL: Settings = { speed: 1.0, pitch: 1.0, volume: 1.0 };
 
 const METERS: { key: keyof Settings; label: string; min: number; max: number }[] = [
   { key: "speed", label: "SPD", min: 0.5, max: 2.0 },
-  { key: "pitch", label: "PIT", min: 0.5, max: 1.8 },
   { key: "volume", label: "VOL", min: 0.1, max: 1.0 },
 ];
 
 const EQ_BARS = 9;
+
+type SpeakResponse = {
+  audio_id: string;
+  ext: string;
+  engine: string;
+  cached: boolean;
+  settings: Settings;
+  matched: string[];
+};
 
 export default function Home() {
   const [line, setLine] = useState("");
@@ -32,6 +40,10 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState("");
   const [settings, setSettings] = useState<Settings>(NEUTRAL);
   const [matched, setMatched] = useState<string[]>([]);
+  const [engine, setEngine] = useState("");
+  const [cached, setCached] = useState(false);
+
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   async function handlePlay() {
     const text = line.trim();
@@ -41,8 +53,7 @@ export default function Home() {
     setStatus("connecting");
 
     try {
-      // 1. Send the line + direction to the backend; it returns the voice
-      //    settings it worked out and the words it matched.
+      // 1. Ask the backend to render the line with the direction applied.
       const response = await fetch(`${BACKEND_URL}/speak`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -53,36 +64,24 @@ export default function Home() {
         throw new Error(`Backend responded with ${response.status}`);
       }
 
-      const data: { received: string; settings: Settings; matched: string[] } =
-        await response.json();
-
+      const data: SpeakResponse = await response.json();
       setSettings(data.settings);
       setMatched(data.matched);
+      setEngine(data.engine);
+      setCached(data.cached);
 
-      // 2. Make sure the browser actually has a built-in voice.
-      if (typeof window === "undefined" || !window.speechSynthesis) {
-        throw new Error("This browser has no built-in speech voice.");
-      }
-
-      // 3. Apply the settings to the browser voice and speak.
-      const utterance = new SpeechSynthesisUtterance(data.received);
-      utterance.rate = data.settings.speed;
-      utterance.pitch = data.settings.pitch;
-      utterance.volume = data.settings.volume;
-      utterance.onend = () => setStatus("idle");
-      utterance.onerror = () => {
-        setErrorMessage("Something went wrong while speaking.");
-        setStatus("error");
-      };
-
-      setStatus("speaking");
-      window.speechSynthesis.cancel(); // stop anything already talking
-      window.speechSynthesis.speak(utterance);
+      // 2. Point the audio element at the rendered file and play it. Speed is
+      //    already baked in; we apply volume here at playback.
+      const audio = audioRef.current;
+      if (!audio) throw new Error("Audio player not ready.");
+      audio.src = `${BACKEND_URL}/audio/${data.audio_id}.${data.ext}`;
+      audio.volume = data.settings.volume;
+      await audio.play(); // onPlay flips status to "speaking"
     } catch (err) {
       setErrorMessage(
         err instanceof Error
-          ? `Couldn't reach the backend: ${err.message}`
-          : "Couldn't reach the backend."
+          ? `Couldn't render the line: ${err.message}`
+          : "Couldn't render the line."
       );
       setStatus("error");
     }
@@ -93,7 +92,7 @@ export default function Home() {
 
   const buttonLabel =
     status === "connecting"
-      ? "Connecting…"
+      ? "Rendering…"
       : speaking
         ? "Speaking…"
         : "Play";
@@ -120,8 +119,8 @@ export default function Home() {
         </header>
 
         <p className="text-sm leading-relaxed text-zinc-400">
-          Type a line, add a direction in plain English, and hear it. The
-          direction sets the voice; matched words show what it understood.
+          Type a line, add a direction in plain English, and hear it rendered by
+          a real voice engine. Matched words show what the direction understood.
         </p>
 
         {/* Line input */}
@@ -186,7 +185,7 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Meters: the resulting voice settings, console-style. */}
+        {/* Meters + engine readout, console-style. */}
         <div className="flex flex-col gap-3 border-t border-zinc-800 pt-5">
           {METERS.map(({ key, label, min, max }) => {
             const value = settings[key];
@@ -209,6 +208,12 @@ export default function Home() {
             );
           })}
 
+          <p className="font-mono text-xs text-zinc-500">
+            engine:{" "}
+            <span className="text-amber-300/90">{engine || "ready"}</span>
+            {cached && <span className="text-zinc-500"> · cached</span>}
+          </p>
+
           {matched.length > 0 ? (
             <p className="font-mono text-xs text-amber-300/90">
               matched: {matched.join(" · ")}
@@ -225,6 +230,18 @@ export default function Home() {
             {errorMessage}
           </p>
         )}
+
+        {/* The actual audio player, hidden. Events drive the status/equalizer. */}
+        <audio
+          ref={audioRef}
+          className="hidden"
+          onPlay={() => setStatus("speaking")}
+          onEnded={() => setStatus("idle")}
+          onError={() => {
+            setErrorMessage("Something went wrong while playing the audio.");
+            setStatus("error");
+          }}
+        />
       </div>
     </main>
   );
