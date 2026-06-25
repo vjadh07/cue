@@ -9,14 +9,19 @@ inputs, so an identical line is reused instead of re-generated.
 import re
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+# Load backend/.env (the ElevenLabs key) before creating the providers.
+load_dotenv(Path(__file__).parent / ".env")
+
 from cache import AudioCache
 from direction import interpret
-from providers import PiperProvider
+from engine import Engine
+from providers import ElevenLabsProvider, PiperProvider
 
 app = FastAPI()
 
@@ -28,9 +33,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# The voice engine and the on-disk audio cache. (audio_cache/ is git-ignored.)
-provider = PiperProvider()
+# ElevenLabs first, Piper as the offline / out-of-quota fallback. The cache
+# wraps both so identical lines are never re-rendered. (audio_cache/ is git-ignored.)
 cache = AudioCache(Path(__file__).parent / "audio_cache")
+engine = Engine([ElevenLabsProvider(), PiperProvider()], cache)
 
 # Only ever serve files whose names look like our own hashes, never arbitrary
 # paths — this stops requests like /audio/../../secret.
@@ -57,19 +63,11 @@ def speak(request: SpeakRequest):
     result = interpret(request.direction)
     speed = result["settings"]["speed"]
 
-    # 2. Look this render up in the cache. A hit means no synthesis at all.
-    audio_id = cache.key(provider.name, speed, text)
-    if cache.has(audio_id, provider.ext):
-        cached = True
-    else:
-        cache.write(audio_id, provider.ext, provider.synthesize(text, speed))
-        cached = False
+    # 2. Render via the engine (cache → ElevenLabs → Piper fallback).
+    rendered = engine.render(text, speed)
 
     return {
-        "audio_id": audio_id,
-        "ext": provider.ext,
-        "engine": provider.name,
-        "cached": cached,
+        **rendered,
         "settings": result["settings"],
         "matched": result["matched"],
     }

@@ -2,21 +2,71 @@
 
 Every provider exposes the same shape: a name, a content type, a file
 extension, and a synthesize(text, speed) -> bytes method. That sameness is what
-lets the orchestrator (engine.py) try one engine and fall back to another.
+lets the Engine try one and fall back to another.
 
-Step 3 starts with the free, local Piper engine. ElevenLabs is added later as
-the default, with Piper kept as the offline / quota-exhausted fallback.
+- ElevenLabsProvider: the default, studio-quality cloud voice (needs an API key).
+- PiperProvider: the free, local, offline fallback.
 """
 
 import io
+import os
 import wave
 from pathlib import Path
 
+import httpx
 from piper import PiperVoice, SynthesisConfig
 
 # The downloaded Piper voice lives here (git-ignored — see .gitignore).
 VOICES_DIR = Path(__file__).parent / "voices"
 PIPER_MODEL = VOICES_DIR / "en_US-lessac-medium.onnx"
+
+ELEVENLABS_URL = "https://api.elevenlabs.io/v1/text-to-speech"
+# George — "Warm, Captivating Storyteller". Overridable via env.
+DEFAULT_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"
+DEFAULT_MODEL = "eleven_multilingual_v2"
+
+
+class ElevenLabsProvider:
+    """Studio-quality cloud TTS. Uses the free-tier API key from the environment."""
+
+    name = "elevenlabs"
+    content_type = "audio/mpeg"
+    ext = "mp3"
+
+    def __init__(self) -> None:
+        self.api_key = os.environ.get("ELEVENLABS_API_KEY", "")
+        self.voice_id = os.environ.get("ELEVENLABS_VOICE_ID", DEFAULT_VOICE_ID)
+        self.model = os.environ.get("ELEVENLABS_MODEL", DEFAULT_MODEL)
+
+    def synthesize(self, text: str, speed: float) -> bytes:
+        # No key means this engine can't run — the Engine will fall back to Piper.
+        if not self.api_key:
+            raise RuntimeError("ELEVENLABS_API_KEY is not set")
+
+        # ElevenLabs only accepts a narrow speed window, so clamp to it.
+        el_speed = min(1.2, max(0.7, speed))
+
+        response = httpx.post(
+            f"{ELEVENLABS_URL}/{self.voice_id}",
+            headers={
+                "xi-api-key": self.api_key,
+                "Content-Type": "application/json",
+            },
+            json={
+                "text": text,
+                "model_id": self.model,
+                "voice_settings": {
+                    "stability": 0.5,
+                    "similarity_boost": 0.75,
+                    "speed": el_speed,
+                },
+            },
+            timeout=30.0,
+        )
+        # Raises on quota-exceeded / bad key / network issues; the Engine then
+        # falls back to Piper.
+        response.raise_for_status()
+        return response.content
 
 
 class PiperProvider:
