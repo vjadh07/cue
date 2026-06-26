@@ -7,18 +7,20 @@ import { useRef, useState } from "react";
 // Where the Python backend is listening. For now this is hard-coded.
 const BACKEND_URL = "http://localhost:8000";
 
-// What the screen can be doing at any moment. "connecting" now also covers the
-// backend rendering the audio, so we label it "Rendering…".
+// What the screen can be doing at any moment. "connecting" covers the backend
+// interpreting + rendering, so we label it "Rendering…".
 type Status = "idle" | "connecting" | "speaking" | "error";
 
-// The voice knobs. Speed is baked into the generated audio; volume is applied
-// here at playback; pitch is no longer used by the real engines.
-type Settings = { speed: number; pitch: number; volume: number };
+// The voice dials the brain produces. stability/style/speed shape the
+// ElevenLabs performance; volume is applied here at playback.
+type Settings = { stability: number; style: number; speed: number; volume: number };
 
-const NEUTRAL: Settings = { speed: 1.0, pitch: 1.0, volume: 1.0 };
+const NEUTRAL: Settings = { stability: 0.5, style: 0.3, speed: 1.0, volume: 1.0 };
 
 const METERS: { key: keyof Settings; label: string; min: number; max: number }[] = [
-  { key: "speed", label: "SPD", min: 0.5, max: 2.0 },
+  { key: "stability", label: "STA", min: 0, max: 1 },
+  { key: "style", label: "STY", min: 0, max: 1 },
+  { key: "speed", label: "SPD", min: 0.7, max: 1.2 },
   { key: "volume", label: "VOL", min: 0.1, max: 1.0 },
 ];
 
@@ -30,7 +32,8 @@ type SpeakResponse = {
   engine: string;
   cached: boolean;
   settings: Settings;
-  matched: string[];
+  notes: string;
+  brain: string;
 };
 
 export default function Home() {
@@ -39,8 +42,9 @@ export default function Home() {
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const [settings, setSettings] = useState<Settings>(NEUTRAL);
-  const [matched, setMatched] = useState<string[]>([]);
+  const [notes, setNotes] = useState("");
   const [engine, setEngine] = useState("");
+  const [brain, setBrain] = useState("");
   const [cached, setCached] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -53,7 +57,7 @@ export default function Home() {
     setStatus("connecting");
 
     try {
-      // 1. Ask the backend to render the line with the direction applied.
+      // 1. Ask the backend to interpret the direction and render the line.
       const response = await fetch(`${BACKEND_URL}/speak`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -66,12 +70,12 @@ export default function Home() {
 
       const data: SpeakResponse = await response.json();
       setSettings(data.settings);
-      setMatched(data.matched);
+      setNotes(data.notes);
       setEngine(data.engine);
+      setBrain(data.brain);
       setCached(data.cached);
 
-      // 2. Point the audio element at the rendered file and play it. Speed is
-      //    already baked in; we apply volume here at playback.
+      // 2. Play the rendered file; apply volume here at playback.
       const audio = audioRef.current;
       if (!audio) throw new Error("Audio player not ready.");
       audio.src = `${BACKEND_URL}/audio/${data.audio_id}.${data.ext}`;
@@ -119,8 +123,8 @@ export default function Home() {
         </header>
 
         <p className="text-sm leading-relaxed text-zinc-400">
-          Type a line, add a direction in plain English, and hear it rendered by
-          a real voice engine. Matched words show what the direction understood.
+          Type a line, then direct it in plain English. The brain reads your
+          direction and the voice performs it.
         </p>
 
         {/* Line input */}
@@ -136,7 +140,7 @@ export default function Home() {
             value={line}
             onChange={(e) => setLine(e.target.value)}
             rows={2}
-            placeholder="Welcome to Cue."
+            placeholder="We actually did it."
             className="w-full rounded-lg border border-zinc-700 bg-zinc-950/60 px-4 py-3 text-base leading-relaxed text-zinc-100 outline-none resize-y placeholder:text-zinc-600 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
           />
         </div>
@@ -153,7 +157,7 @@ export default function Home() {
             id="direction"
             value={direction}
             onChange={(e) => setDirection(e.target.value)}
-            placeholder="warm and slow"
+            placeholder="exhausted and resigned, almost a whisper"
             className="w-full rounded-lg border border-zinc-700 bg-zinc-950/60 px-4 py-3 text-base text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
           />
         </div>
@@ -185,7 +189,7 @@ export default function Home() {
           ))}
         </div>
 
-        {/* Meters + engine readout, console-style. */}
+        {/* Meters + engine/brain readout, console-style. */}
         <div className="flex flex-col gap-3 border-t border-zinc-800 pt-5">
           {METERS.map(({ key, label, min, max }) => {
             const value = settings[key];
@@ -209,18 +213,20 @@ export default function Home() {
           })}
 
           <p className="font-mono text-xs text-zinc-500">
-            engine:{" "}
-            <span className="text-amber-300/90">{engine || "ready"}</span>
-            {cached && <span className="text-zinc-500"> · cached</span>}
+            engine: <span className="text-amber-300/90">{engine || "ready"}</span>
+            {brain && (
+              <>
+                {" · "}brain: <span className="text-amber-300/90">{brain}</span>
+              </>
+            )}
+            {cached && <span> · cached</span>}
           </p>
 
-          {matched.length > 0 ? (
-            <p className="font-mono text-xs text-amber-300/90">
-              matched: {matched.join(" · ")}
-            </p>
+          {notes ? (
+            <p className="font-mono text-xs text-amber-300/90">read as: {notes}</p>
           ) : (
             <p className="font-mono text-xs text-zinc-600">
-              no direction words recognized, reading neutrally
+              no direction, reading neutrally
             </p>
           )}
         </div>

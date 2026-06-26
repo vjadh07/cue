@@ -18,8 +18,8 @@ from pydantic import BaseModel
 # Load backend/.env (the ElevenLabs key) before creating the providers.
 load_dotenv(Path(__file__).parent / ".env")
 
+from brains import BrainEngine, KeywordBrain, OllamaBrain
 from cache import AudioCache
-from direction import interpret
 from engine import Engine
 from providers import ElevenLabsProvider, PiperProvider
 
@@ -33,10 +33,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ElevenLabs first, Piper as the offline / out-of-quota fallback. The cache
-# wraps both so identical lines are never re-rendered. (audio_cache/ is git-ignored.)
+# Voice: ElevenLabs first, Piper as the offline / out-of-quota fallback. The
+# cache wraps both so identical lines are never re-rendered.
 cache = AudioCache(Path(__file__).parent / "audio_cache")
-engine = Engine([ElevenLabsProvider(), PiperProvider()], cache)
+voice_engine = Engine([ElevenLabsProvider(), PiperProvider()], cache)
+
+# Brain: local Ollama interprets the direction, with the keyword matcher as the
+# deterministic final fallback. (The Groq cloud default gets added in front later.)
+brain_engine = BrainEngine([OllamaBrain(), KeywordBrain()])
 
 # Only ever serve files whose names look like our own hashes, never arbitrary
 # paths — this stops requests like /audio/../../secret.
@@ -59,17 +63,17 @@ def speak(request: SpeakRequest):
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
 
-    # 1. Turn the direction into settings (Step 2 logic, unchanged).
-    result = interpret(request.direction)
-    speed = result["settings"]["speed"]
+    # 1. Interpret the direction into settings (brain: Ollama → keyword fallback).
+    brain = brain_engine.interpret(text, request.direction)
 
-    # 2. Render via the engine (cache → ElevenLabs → Piper fallback).
-    rendered = engine.render(text, speed)
+    # 2. Render those settings (voice: cache → ElevenLabs → Piper fallback).
+    rendered = voice_engine.render(text, brain["settings"])
 
     return {
         **rendered,
-        "settings": result["settings"],
-        "matched": result["matched"],
+        "settings": brain["settings"],
+        "notes": brain["notes"],
+        "brain": brain["brain"],
     }
 
 

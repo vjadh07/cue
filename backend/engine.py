@@ -14,10 +14,10 @@ class Engine:
         self.providers = providers
         self.cache = cache
 
-    def render(self, text: str, speed: float) -> dict:
+    def render(self, text: str, settings: dict) -> dict:
         # 1. If any provider already has this exact render cached, reuse it.
         for provider in self.providers:
-            key = self.cache.key(provider.name, speed, text)
+            key = self.cache.key(provider.name, settings, text)
             if self.cache.has(key, provider.ext):
                 return {
                     "audio_id": key,
@@ -29,10 +29,10 @@ class Engine:
         # 2. Cache miss: try each provider in order until one succeeds.
         for provider in self.providers:
             try:
-                audio = provider.synthesize(text, speed)
+                audio = provider.synthesize(text, settings)
             except Exception:
                 continue  # this engine is down/out of quota — try the next
-            key = self.cache.key(provider.name, speed, text)
+            key = self.cache.key(provider.name, settings, text)
             self.cache.write(key, provider.ext, audio)
             return {
                 "audio_id": key,

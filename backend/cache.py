@@ -15,9 +15,17 @@ class AudioCache:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def key(self, engine: str, speed: float, text: str) -> str:
-        """A stable id for one exact render. Same inputs always give the same id."""
-        raw = f"{engine}|{speed:.2f}|{text}"
+    def key(self, engine: str, settings: dict, text: str) -> str:
+        """A stable id for one exact render. Same inputs always give the same id.
+
+        Keyed on everything that affects the audio: the engine, the expressive
+        settings (stability/style/speed), and the text. Volume is excluded — it's
+        applied at playback, so it doesn't change the rendered file.
+        """
+        s = settings
+        raw = (
+            f"{engine}|{s['stability']:.2f}|{s['style']:.2f}|{s['speed']:.2f}|{text}"
+        )
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def path(self, key: str, ext: str) -> Path:

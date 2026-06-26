@@ -38,14 +38,12 @@ class ElevenLabsProvider:
         self.voice_id = os.environ.get("ELEVENLABS_VOICE_ID", DEFAULT_VOICE_ID)
         self.model = os.environ.get("ELEVENLABS_MODEL", DEFAULT_MODEL)
 
-    def synthesize(self, text: str, speed: float) -> bytes:
+    def synthesize(self, text: str, settings: dict) -> bytes:
         # No key means this engine can't run — the Engine will fall back to Piper.
         if not self.api_key:
             raise RuntimeError("ELEVENLABS_API_KEY is not set")
 
-        # ElevenLabs only accepts a narrow speed window, so clamp to it.
-        el_speed = min(1.2, max(0.7, speed))
-
+        # The expressive controls come straight from the brain (already clamped).
         response = httpx.post(
             f"{ELEVENLABS_URL}/{self.voice_id}",
             headers={
@@ -56,9 +54,10 @@ class ElevenLabsProvider:
                 "text": text,
                 "model_id": self.model,
                 "voice_settings": {
-                    "stability": 0.5,
+                    "stability": settings["stability"],
+                    "style": settings["style"],
                     "similarity_boost": 0.75,
-                    "speed": el_speed,
+                    "speed": settings["speed"],
                 },
             },
             timeout=30.0,
@@ -85,11 +84,12 @@ class PiperProvider:
             self._voice = PiperVoice.load(str(PIPER_MODEL))
         return self._voice
 
-    def synthesize(self, text: str, speed: float) -> bytes:
-        """Render text to WAV bytes at the given speed (1.0 = normal)."""
+    def synthesize(self, text: str, settings: dict) -> bytes:
+        """Render text to WAV bytes. Piper can only honor speed; it ignores the
+        expressive controls (stability/style) that ElevenLabs uses."""
         # Piper's length_scale stretches time, so it's the inverse of speed:
         # faster speech = shorter = smaller length_scale.
-        config = SynthesisConfig(length_scale=1.0 / speed)
+        config = SynthesisConfig(length_scale=1.0 / settings["speed"])
 
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as wav_file:
