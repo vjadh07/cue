@@ -63,15 +63,17 @@ def speak(request: SpeakRequest):
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
 
-    # 1. Interpret the direction into settings (brain: Ollama → keyword fallback).
+    # 1. Interpret the direction into settings + audio tags (brain: Ollama →
+    #    keyword fallback).
     brain = brain_engine.interpret(text, request.direction)
 
-    # 2. Render those settings (voice: cache → ElevenLabs → Piper fallback).
-    rendered = voice_engine.render(text, brain["settings"])
+    # 2. Render it (voice: cache → ElevenLabs v3 with tags → Piper fallback).
+    rendered = voice_engine.render(text, brain["settings"], brain["tags"])
 
     return {
         **rendered,
         "settings": brain["settings"],
+        "tags": brain["tags"],
         "notes": brain["notes"],
         "brain": brain["brain"],
     }

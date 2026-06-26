@@ -23,7 +23,9 @@ PIPER_MODEL = VOICES_DIR / "en_US-lessac-medium.onnx"
 ELEVENLABS_URL = "https://api.elevenlabs.io/v1/text-to-speech"
 # George — "Warm, Captivating Storyteller". Overridable via env.
 DEFAULT_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"
-DEFAULT_MODEL = "eleven_multilingual_v2"
+# v3 is the expressive model that understands inline audio tags ([sarcastic],
+# [whispers], ...) — that's what lets the voice actually act.
+DEFAULT_MODEL = "eleven_v3"
 
 
 class ElevenLabsProvider:
@@ -38,10 +40,16 @@ class ElevenLabsProvider:
         self.voice_id = os.environ.get("ELEVENLABS_VOICE_ID", DEFAULT_VOICE_ID)
         self.model = os.environ.get("ELEVENLABS_MODEL", DEFAULT_MODEL)
 
-    def synthesize(self, text: str, settings: dict) -> bytes:
+    def synthesize(self, text: str, settings: dict, tags: list) -> bytes:
         # No key means this engine can't run — the Engine will fall back to Piper.
         if not self.api_key:
             raise RuntimeError("ELEVENLABS_API_KEY is not set")
+
+        # Prepend the brain's audio tags so v3 performs the line, e.g.
+        # ["sarcastic", "sighs"] + "We did it." -> "[sarcastic] [sighs] We did it."
+        directed = text
+        if tags:
+            directed = " ".join(f"[{t}]" for t in tags) + " " + text
 
         # The expressive controls come straight from the brain (already clamped).
         response = httpx.post(
@@ -51,7 +59,7 @@ class ElevenLabsProvider:
                 "Content-Type": "application/json",
             },
             json={
-                "text": text,
+                "text": directed,
                 "model_id": self.model,
                 "voice_settings": {
                     "stability": settings["stability"],
@@ -84,9 +92,9 @@ class PiperProvider:
             self._voice = PiperVoice.load(str(PIPER_MODEL))
         return self._voice
 
-    def synthesize(self, text: str, settings: dict) -> bytes:
+    def synthesize(self, text: str, settings: dict, tags: list) -> bytes:
         """Render text to WAV bytes. Piper can only honor speed; it ignores the
-        expressive controls (stability/style) that ElevenLabs uses."""
+        expressive controls (stability/style) and the audio tags."""
         # Piper's length_scale stretches time, so it's the inverse of speed:
         # faster speech = shorter = smaller length_scale.
         config = SynthesisConfig(length_scale=1.0 / settings["speed"])

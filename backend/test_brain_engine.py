@@ -19,7 +19,7 @@ class FakeBrain:
         self.calls += 1
         if self.fail:
             raise RuntimeError(f"{self.name} down")
-        return {"settings": S, "notes": f"{self.name} read"}
+        return {"settings": S, "tags": ["sarcastic"], "notes": f"{self.name} read"}
 
 
 def test_uses_first_brain_when_it_works():
@@ -27,6 +27,7 @@ def test_uses_first_brain_when_it_works():
     result = BrainEngine([a, b]).interpret("hi", "warm")
     assert result["brain"] == "groq"
     assert result["settings"] == S
+    assert result["tags"] == ["sarcastic"]
     assert a.calls == 1
     assert b.calls == 0
 
@@ -44,6 +45,7 @@ def test_all_brains_failing_returns_neutral():
         "hi", "warm"
     )
     assert result["settings"] == DEFAULTS
+    assert result["tags"] == []
     assert result["brain"] == "none"
 
 

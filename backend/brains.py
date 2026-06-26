@@ -14,39 +14,39 @@ import json
 import httpx
 
 from direction import interpret as keyword_interpret
-from settings import clean
+from settings import clean, clean_tags, TAG_WHITELIST
 
 # The director brief. Definitions are explicit because the whole point is that
 # the model maps a vibe onto these specific dials the way a director would.
 SYSTEM_PROMPT = (
-    "You are a voice director for a text-to-speech engine. Given a line and a "
-    "plain-English performance direction, output ONLY a JSON object describing "
-    "how to perform the line.\n\n"
+    "You are a voice director for an expressive text-to-speech engine. Given a "
+    "line and a plain-English performance direction, output ONLY a JSON object "
+    "describing how to perform the line.\n\n"
     "Keys:\n"
-    "- stability (0.0-1.0): HIGH = steady, even, flat, controlled. "
-    "LOW = emotional, variable, intense.\n"
-    "- style (0.0-1.0): LOW = plain, natural, understated. "
-    "HIGH = theatrical, characterful, stylized.\n"
+    "- tags (array of 0-3 strings): audio tags that make the voice ACT out the "
+    "tone. THIS is what carries the emotion. Choose ONLY from: "
+    + ", ".join(sorted(TAG_WHITELIST))
+    + ". Pick the ones that best capture the feeling; use [] if none fit.\n"
+    "- stability (0.0-1.0): HIGH = steady, even, controlled. LOW = variable, intense.\n"
+    "- style (0.0-1.0): LOW = plain, natural. HIGH = theatrical, stylized.\n"
     "- speed (0.7-1.2): 1.0 = normal, lower = slower, higher = faster.\n"
     "- volume (0.1-1.0): 1.0 = normal, lower for soft/whisper/intimate.\n"
     "- notes (string): a short phrase (max 6 words) describing your reading.\n\n"
-    "Guidance: calm/tired/resigned/flat/deadpan -> higher stability, lower style. "
-    "excited/dramatic/panicked/emotional -> lower stability, higher style. "
-    "whisper/soft/intimate -> lower volume. urgent -> faster, gentle -> slower.\n"
+    "The tags carry the emotion; the numbers carry energy and pace. "
     "Output only the JSON object, no prose."
 )
 
-# Two examples to anchor both the format and the interpretation.
+# Two examples to anchor the format, the tags, and the interpretation.
 FEW_SHOT = [
     {"role": "user", "content": 'Line: "Run."\nDirection: frantic and terrified'},
     {
         "role": "assistant",
-        "content": '{"stability": 0.2, "style": 0.75, "speed": 1.2, "volume": 1.0, "notes": "fast, panicked"}',
+        "content": '{"tags": ["shouting", "fearful"], "stability": 0.2, "style": 0.8, "speed": 1.2, "volume": 1.0, "notes": "panicked, urgent"}',
     },
     {"role": "user", "content": 'Line: "It is what it is."\nDirection: tired and resigned, flat'},
     {
         "role": "assistant",
-        "content": '{"stability": 0.85, "style": 0.2, "speed": 0.9, "volume": 0.85, "notes": "flat, weary"}',
+        "content": '{"tags": ["tired", "sighs"], "stability": 0.85, "style": 0.2, "speed": 0.9, "volume": 0.85, "notes": "flat, weary"}',
     },
 ]
 
@@ -63,7 +63,7 @@ class OllamaBrain:
     def interpret(self, line: str, direction: str) -> dict:
         # No direction = neutral read; don't spend an LLM call on it.
         if not direction.strip():
-            return {"settings": clean({}), "notes": ""}
+            return {"settings": clean({}), "tags": [], "notes": ""}
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -84,7 +84,11 @@ class OllamaBrain:
 
         data = json.loads(response.json()["message"]["content"])
         notes = str(data.get("notes", ""))[:80]
-        return {"settings": clean(data), "notes": notes}
+        return {
+            "settings": clean(data),
+            "tags": clean_tags(data.get("tags")),
+            "notes": notes,
+        }
 
 
 class KeywordBrain:
@@ -104,7 +108,8 @@ class KeywordBrain:
         )
         matched = result["matched"]
         notes = "matched: " + ", ".join(matched) if matched else ""
-        return {"settings": cleaned, "notes": notes}
+        # The keyword brain can't produce audio tags — it only knows speed/volume.
+        return {"settings": cleaned, "tags": [], "notes": notes}
 
 
 class BrainEngine:
@@ -123,4 +128,4 @@ class BrainEngine:
                 continue  # this brain is down — try the next
             return {**result, "brain": brain.name}
 
-        return {"settings": clean({}), "notes": "", "brain": "none"}
+        return {"settings": clean({}), "tags": [], "notes": "", "brain": "none"}

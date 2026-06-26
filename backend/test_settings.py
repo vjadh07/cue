@@ -3,7 +3,7 @@ returns (a good LLM, a confused LLM, or garbage) into valid voice settings.
 Nothing downstream should ever see an out-of-range or missing value.
 """
 
-from settings import clean, DEFAULTS
+from settings import clean, clean_tags, DEFAULTS
 
 
 def test_valid_settings_pass_through():
@@ -42,3 +42,33 @@ def test_extra_keys_are_ignored():
 
 def test_values_are_rounded_to_two_decimals():
     assert clean({"stability": 0.333333})["stability"] == 0.33
+
+
+def test_clean_tags_keeps_known_tags():
+    assert clean_tags(["sarcastic", "sighs"]) == ["sarcastic", "sighs"]
+
+
+def test_clean_tags_drops_unknown_tags():
+    # The whitelist is the safety net: junk can't get read aloud as text.
+    assert clean_tags(["sarcastic", "banana"]) == ["sarcastic"]
+
+
+def test_clean_tags_handles_non_list():
+    assert clean_tags("sarcastic") == []
+    assert clean_tags(None) == []
+
+
+def test_clean_tags_normalizes_case_and_brackets():
+    assert clean_tags(["[Sarcastic]", "WHISPERS"]) == ["sarcastic", "whispers"]
+
+
+def test_clean_tags_dedupes():
+    assert clean_tags(["sighs", "sighs"]) == ["sighs"]
+
+
+def test_clean_tags_caps_at_three():
+    assert clean_tags(["excited", "sad", "angry", "happy"]) == ["excited", "sad", "angry"]
+
+
+def test_clean_tags_ignores_non_strings():
+    assert clean_tags(["sad", 5, None]) == ["sad"]
