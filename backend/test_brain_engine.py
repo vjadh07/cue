@@ -3,10 +3,39 @@ deterministic final fallback). Fake brains exercise the orchestration without
 calling a real LLM.
 """
 
-from brains import BrainEngine, KeywordBrain
+from brains import BrainEngine, KeywordBrain, _parse_director_json
 from settings import DEFAULTS
 
 S = {"stability": 0.4, "style": 0.6, "speed": 1.1, "volume": 0.9}
+
+
+# --- _parse_director_json: the shared LLM-reply parser used by Ollama + Groq ---
+
+
+def test_parse_director_json_builds_clean_result():
+    content = (
+        '{"tags": ["sarcastic", "sighs"], "stability": 0.3, "style": 0.7, '
+        '"speed": 1.1, "volume": 0.9, "notes": "smug, dry"}'
+    )
+    result = _parse_director_json(content)
+    assert result["settings"] == {"stability": 0.3, "style": 0.7, "speed": 1.1, "volume": 0.9}
+    assert result["tags"] == ["sarcastic", "sighs"]
+    assert result["notes"] == "smug, dry"
+
+
+def test_parse_director_json_filters_unknown_tags_and_clamps():
+    # "banana" isn't whitelisted; speed is out of range; stability is missing.
+    content = '{"tags": ["sarcastic", "banana", "EXCITED"], "speed": 5.0, "notes": "x"}'
+    result = _parse_director_json(content)
+    assert result["tags"] == ["sarcastic", "excited"]  # banana dropped, case-normalized
+    assert result["settings"]["speed"] == 1.2  # clamped to the supported max
+    assert result["settings"]["stability"] == 0.5  # missing -> default
+
+
+def test_parse_director_json_truncates_long_notes():
+    content = '{"notes": "' + "x" * 200 + '"}'
+    result = _parse_director_json(content)
+    assert len(result["notes"]) == 80
 
 
 class FakeBrain:

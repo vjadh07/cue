@@ -18,7 +18,7 @@ from pydantic import BaseModel
 # Load backend/.env (the ElevenLabs key) before creating the providers.
 load_dotenv(Path(__file__).parent / ".env")
 
-from brains import BrainEngine, KeywordBrain, OllamaBrain
+from brains import BrainEngine, GroqBrain, KeywordBrain, OllamaBrain
 from cache import AudioCache
 from engine import Engine
 from providers import ElevenLabsProvider, PiperProvider
@@ -38,9 +38,9 @@ app.add_middleware(
 cache = AudioCache(Path(__file__).parent / "audio_cache")
 voice_engine = Engine([ElevenLabsProvider(), PiperProvider()], cache)
 
-# Brain: local Ollama interprets the direction, with the keyword matcher as the
-# deterministic final fallback. (The Groq cloud default gets added in front later.)
-brain_engine = BrainEngine([OllamaBrain(), KeywordBrain()])
+# Brain: Groq (fast cloud LLM) interprets the direction, falling back to local
+# Ollama if it's unavailable, then to the deterministic keyword matcher.
+brain_engine = BrainEngine([GroqBrain(), OllamaBrain(), KeywordBrain()])
 
 # Only ever serve files whose names look like our own hashes, never arbitrary
 # paths — this stops requests like /audio/../../secret.

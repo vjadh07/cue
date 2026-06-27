@@ -10,6 +10,7 @@ never produce out-of-range values.
 """
 
 import json
+import os
 
 import httpx
 
@@ -51,6 +52,30 @@ FEW_SHOT = [
 ]
 
 
+def _build_messages(line: str, direction: str) -> list[dict]:
+    """The chat the model sees: the director brief, the two anchors, then this
+    line + direction. Identical for every LLM brain (Ollama, Groq), so they
+    share it."""
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        *FEW_SHOT,
+        {"role": "user", "content": f'Line: "{line}"\nDirection: {direction}'},
+    ]
+
+
+def _parse_director_json(content: str) -> dict:
+    """Turn an LLM's JSON reply into a safe {settings, tags, notes} dict. The
+    reply format is the same regardless of which model produced it, so every LLM
+    brain parses through here. Everything goes through the cleaners, so a bad
+    answer can't yield out-of-range settings or off-whitelist tags."""
+    data = json.loads(content)
+    return {
+        "settings": clean(data),
+        "tags": clean_tags(data.get("tags")),
+        "notes": str(data.get("notes", ""))[:80],
+    }
+
+
 class OllamaBrain:
     """Local LLM via Ollama. Free, offline, no quota."""
 
@@ -65,30 +90,60 @@ class OllamaBrain:
         if not direction.strip():
             return {"settings": clean({}), "tags": [], "notes": ""}
 
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            *FEW_SHOT,
-            {"role": "user", "content": f'Line: "{line}"\nDirection: {direction}'},
-        ]
         response = httpx.post(
             f"{self.url}/api/chat",
             json={
                 "model": self.model,
                 "stream": False,
                 "format": "json",  # force valid JSON output
-                "messages": messages,
+                "messages": _build_messages(line, direction),
             },
             timeout=60.0,
         )
         response.raise_for_status()
+        return _parse_director_json(response.json()["message"]["content"])
 
-        data = json.loads(response.json()["message"]["content"])
-        notes = str(data.get("notes", ""))[:80]
-        return {
-            "settings": clean(data),
-            "tags": clean_tags(data.get("tags")),
-            "notes": notes,
-        }
+
+class GroqBrain:
+    """Cloud LLM via Groq's OpenAI-compatible API. Groq runs models on custom
+    hardware, so a reply lands in well under a second — that's why it goes first,
+    ahead of the slower local Ollama. Needs a free GROQ_API_KEY; if it's missing
+    or the call fails, BrainEngine falls back to Ollama, then the keyword brain."""
+
+    name = "groq"
+
+    def __init__(
+        self,
+        model: str = "llama-3.3-70b-versatile",
+        url: str = "https://api.groq.com/openai/v1/chat/completions",
+    ) -> None:
+        self.model = model
+        self.url = url
+        # main.py loads .env before constructing the brains, so the key is here.
+        self.api_key = os.environ.get("GROQ_API_KEY", "")
+
+    def interpret(self, line: str, direction: str) -> dict:
+        # No direction = neutral read; don't spend an API call (or need a key).
+        if not direction.strip():
+            return {"settings": clean({}), "tags": [], "notes": ""}
+
+        # No key -> raise so BrainEngine moves on to the local Ollama brain.
+        if not self.api_key:
+            raise RuntimeError("GROQ_API_KEY not set")
+
+        response = httpx.post(
+            self.url,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={
+                "model": self.model,
+                "messages": _build_messages(line, direction),
+                "response_format": {"type": "json_object"},  # force valid JSON
+                "temperature": 0.7,
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return _parse_director_json(response.json()["choices"][0]["message"]["content"])
 
 
 class KeywordBrain:

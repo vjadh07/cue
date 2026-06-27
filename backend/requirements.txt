@@ -7,7 +7,9 @@ python-dotenv
 # After installing, download the Piper voice model into backend/voices/ with:
 #   venv/bin/python -m piper.download_voices en_US-lessac-medium --download-dir voices
 #
-# The LLM "brain" uses a local Ollama model (not a pip package). Set it up with:
-#   brew install --cask ollama-app   (the cask build has Apple GPU/Metal support)
-#   ollama serve                     (run in the background)
-#   ollama pull qwen2.5:7b
+# The LLM "brain" is Groq (fast cloud) with a local Ollama model as fallback.
+#   - Groq: put a free key in .env as GROQ_API_KEY (https://console.groq.com).
+#   - Ollama (the offline fallback) is not a pip package. Set it up with:
+#       brew install --cask ollama-app   (the cask build has Apple GPU/Metal support)
+#       ollama serve                     (run in the background)
+#       ollama pull qwen2.5:7b
