@@ -22,6 +22,8 @@ from brains import BrainEngine, GroqBrain, KeywordBrain, OllamaBrain
 from cache import AudioCache
 from engine import Engine
 from providers import ElevenLabsProvider, PiperProvider
+from script import split_lines
+from settings import clean, clean_tags
 
 app = FastAPI()
 
@@ -52,6 +54,20 @@ class SpeakRequest(BaseModel):
     direction: str = ""
 
 
+class DirectRequest(BaseModel):
+    # The whole pasted script (line breaks separate lines) + one direction.
+    script: str
+    direction: str = ""
+
+
+class RenderRequest(BaseModel):
+    # A single line plus the settings/tags it already got from /direct. The
+    # client supplies these, so they're re-cleaned before they reach the voice.
+    text: str
+    settings: dict = {}
+    tags: list[str] = []
+
+
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Cue backend is running"}
@@ -77,6 +93,43 @@ def speak(request: SpeakRequest):
         "notes": brain["notes"],
         "brain": brain["brain"],
     }
+
+
+@app.post("/direct")
+def direct(request: DirectRequest):
+    """Step 4b: restyle a whole script under one direction. Splits the pasted
+    block into lines and interprets each one with the full script as context
+    (so the direction can ramp across the arc). Brain only — no audio is rendered
+    here, so this is fast and spends no ElevenLabs credits."""
+    lines = split_lines(request.script)
+    interpretations = brain_engine.interpret_script(lines, request.direction)
+    return {
+        "lines": [
+            {
+                "text": line,
+                "settings": result["settings"],
+                "tags": result["tags"],
+                "notes": result["notes"],
+                "brain": result["brain"],
+            }
+            for line, result in zip(lines, interpretations)
+        ]
+    }
+
+
+@app.post("/render")
+def render(request: RenderRequest):
+    """Render one line into audio using the settings/tags it already got from
+    /direct. This is what Play calls — it does NOT re-interpret, just voices the
+    line (cache → ElevenLabs v3 with tags → Piper fallback)."""
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    # The settings/tags came from the client, so re-clean them before the voice.
+    settings = clean(request.settings)
+    tags = clean_tags(request.tags)
+    return voice_engine.render(text, settings, tags)
 
 
 @app.get("/audio/{filename}")

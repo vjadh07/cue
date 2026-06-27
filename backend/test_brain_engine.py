@@ -3,7 +3,7 @@ deterministic final fallback). Fake brains exercise the orchestration without
 calling a real LLM.
 """
 
-from brains import BrainEngine, KeywordBrain, _parse_director_json
+from brains import BrainEngine, KeywordBrain, _build_messages, _parse_director_json
 from settings import DEFAULTS
 
 S = {"stability": 0.4, "style": 0.6, "speed": 1.1, "volume": 0.9}
@@ -43,9 +43,11 @@ class FakeBrain:
         self.name = name
         self.fail = fail
         self.calls = 0
+        self.seen = []  # (script, index) passed on each call
 
-    def interpret(self, line, direction):
+    def interpret(self, line, direction, script=None, index=0):
         self.calls += 1
+        self.seen.append((script, index))
         if self.fail:
             raise RuntimeError(f"{self.name} down")
         return {"settings": S, "tags": ["sarcastic"], "notes": f"{self.name} read"}
@@ -88,3 +90,46 @@ def test_keyword_brain_neutral_when_no_keywords():
     result = KeywordBrain().interpret("hi", "")
     assert result["settings"] == DEFAULTS
     assert result["notes"] == ""
+
+
+# --- _build_messages: single-line vs whole-script context ---
+
+
+def test_build_messages_single_line_has_no_script_block():
+    user = _build_messages("Hello.", "warmly")[-1]["content"]
+    assert "Hello." in user
+    assert "warmly" in user
+    assert "script" not in user.lower()  # no script context in single-line mode
+
+
+def test_build_messages_with_script_includes_all_lines_and_marks_target():
+    lines = ["One.", "Two.", "Three."]
+    user = _build_messages("Two.", "build up", script=lines, index=1)[-1]["content"]
+    assert "One." in user and "Two." in user and "Three." in user
+    assert "build up" in user
+    assert "line 2" in user  # target line marked 1-based
+
+
+# --- interpret_script: one direction across many lines ---
+
+
+def test_interpret_script_returns_one_result_per_line():
+    a = FakeBrain("groq")
+    results = BrainEngine([a]).interpret_script(["A", "B", "C"], "dramatic")
+    assert len(results) == 3
+    assert all(r["brain"] == "groq" for r in results)
+    assert a.calls == 3
+
+
+def test_interpret_script_passes_whole_script_and_index_each_call():
+    a = FakeBrain("groq")
+    lines = ["A", "B"]
+    BrainEngine([a]).interpret_script(lines, "warm")
+    assert a.seen == [(lines, 0), (lines, 1)]
+
+
+def test_interpret_script_falls_back_per_line():
+    a, b = FakeBrain("groq", fail=True), FakeBrain("ollama")
+    results = BrainEngine([a, b]).interpret_script(["A", "B"], "warm")
+    assert all(r["brain"] == "ollama" for r in results)
+    assert a.calls == 2 and b.calls == 2

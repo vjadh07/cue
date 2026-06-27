@@ -52,14 +52,31 @@ FEW_SHOT = [
 ]
 
 
-def _build_messages(line: str, direction: str) -> list[dict]:
-    """The chat the model sees: the director brief, the two anchors, then this
-    line + direction. Identical for every LLM brain (Ollama, Groq), so they
-    share it."""
+def _build_messages(
+    line: str, direction: str, script: list[str] | None = None, index: int = 0
+) -> list[dict]:
+    """The chat the model sees: the director brief, the two anchors, then the
+    line to perform. Shared by every LLM brain (Ollama, Groq).
+
+    With no `script`, it's a single line on its own. With a `script` (the whole
+    list of lines) it shows the model the full script and marks which line to
+    perform, so one direction can ramp across the arc instead of hitting every
+    line the same."""
+    if script:
+        numbered = "\n".join(f"{i + 1}. {text}" for i, text in enumerate(script))
+        user = (
+            f"Full script for context:\n{numbered}\n\n"
+            f"Direction (applies to the whole script): {direction}\n\n"
+            f'Now perform line {index + 1}: "{line}"\n'
+            "Output the JSON for THIS line only, judging its delivery from where "
+            "it sits in the script's arc."
+        )
+    else:
+        user = f'Line: "{line}"\nDirection: {direction}'
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         *FEW_SHOT,
-        {"role": "user", "content": f'Line: "{line}"\nDirection: {direction}'},
+        {"role": "user", "content": user},
     ]
 
 
@@ -85,7 +102,9 @@ class OllamaBrain:
         self.model = model
         self.url = url
 
-    def interpret(self, line: str, direction: str) -> dict:
+    def interpret(
+        self, line: str, direction: str, script: list[str] | None = None, index: int = 0
+    ) -> dict:
         # No direction = neutral read; don't spend an LLM call on it.
         if not direction.strip():
             return {"settings": clean({}), "tags": [], "notes": ""}
@@ -96,7 +115,7 @@ class OllamaBrain:
                 "model": self.model,
                 "stream": False,
                 "format": "json",  # force valid JSON output
-                "messages": _build_messages(line, direction),
+                "messages": _build_messages(line, direction, script, index),
             },
             timeout=60.0,
         )
@@ -122,7 +141,9 @@ class GroqBrain:
         # main.py loads .env before constructing the brains, so the key is here.
         self.api_key = os.environ.get("GROQ_API_KEY", "")
 
-    def interpret(self, line: str, direction: str) -> dict:
+    def interpret(
+        self, line: str, direction: str, script: list[str] | None = None, index: int = 0
+    ) -> dict:
         # No direction = neutral read; don't spend an API call (or need a key).
         if not direction.strip():
             return {"settings": clean({}), "tags": [], "notes": ""}
@@ -136,7 +157,7 @@ class GroqBrain:
             headers={"Authorization": f"Bearer {self.api_key}"},
             json={
                 "model": self.model,
-                "messages": _build_messages(line, direction),
+                "messages": _build_messages(line, direction, script, index),
                 "response_format": {"type": "json_object"},  # force valid JSON
                 "temperature": 0.7,
             },
@@ -153,7 +174,11 @@ class KeywordBrain:
 
     name = "keyword"
 
-    def interpret(self, line: str, direction: str) -> dict:
+    def interpret(
+        self, line: str, direction: str, script: list[str] | None = None, index: int = 0
+    ) -> dict:
+        # Keyword matching is per-line only — it can't use the script's arc, so
+        # script/index are accepted (to match the interface) but ignored.
         result = keyword_interpret(direction)
         cleaned = clean(
             {
@@ -175,12 +200,24 @@ class BrainEngine:
     def __init__(self, brains: list) -> None:
         self.brains = brains
 
-    def interpret(self, line: str, direction: str) -> dict:
+    def interpret(
+        self, line: str, direction: str, script: list[str] | None = None, index: int = 0
+    ) -> dict:
         for brain in self.brains:
             try:
-                result = brain.interpret(line, direction)
+                result = brain.interpret(line, direction, script=script, index=index)
             except Exception:
                 continue  # this brain is down — try the next
             return {**result, "brain": brain.name}
 
         return {"settings": clean({}), "tags": [], "notes": "", "brain": "none"}
+
+    def interpret_script(self, lines: list[str], direction: str) -> list[dict]:
+        """Restyle a whole script under one direction. Each line is interpreted
+        with the full script passed in as context, so the brain can read the arc
+        (a line's place in the script) — not just the line alone. Fallback still
+        happens per line, so one slow/failing line can't sink the rest."""
+        return [
+            self.interpret(line, direction, script=lines, index=i)
+            for i, line in enumerate(lines)
+        ]
