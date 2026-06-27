@@ -32,6 +32,7 @@ type SpeakResponse = {
   engine: string;
   cached: boolean;
   settings: Settings;
+  tags: string[];
   notes: string;
   brain: string;
 };
@@ -42,6 +43,7 @@ export default function Home() {
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const [settings, setSettings] = useState<Settings>(NEUTRAL);
+  const [tags, setTags] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [engine, setEngine] = useState("");
   const [brain, setBrain] = useState("");
@@ -70,6 +72,7 @@ export default function Home() {
 
       const data: SpeakResponse = await response.json();
       setSettings(data.settings);
+      setTags(data.tags);
       setNotes(data.notes);
       setEngine(data.engine);
       setBrain(data.brain);
@@ -221,6 +224,19 @@ export default function Home() {
             )}
             {cached && <span> · cached</span>}
           </p>
+
+          {tags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 font-mono text-[11px] text-amber-300/90"
+                >
+                  [{tag}]
+                </span>
+              ))}
+            </div>
+          )}
 
           {notes ? (
             <p className="font-mono text-xs text-amber-300/90">read as: {notes}</p>
