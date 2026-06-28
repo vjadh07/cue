@@ -40,10 +40,13 @@ class ElevenLabsProvider:
         self.voice_id = os.environ.get("ELEVENLABS_VOICE_ID", DEFAULT_VOICE_ID)
         self.model = os.environ.get("ELEVENLABS_MODEL", DEFAULT_MODEL)
 
-    def synthesize(self, text: str, settings: dict, tags: list) -> bytes:
+    def synthesize(self, text: str, settings: dict, tags: list, voice: str = "") -> bytes:
         # No key means this engine can't run — the Engine will fall back to Piper.
         if not self.api_key:
             raise RuntimeError("ELEVENLABS_API_KEY is not set")
+
+        # The caller can pick the voice (the actor); fall back to the default.
+        voice_id = voice or self.voice_id
 
         # Prepend the brain's audio tags so v3 performs the line, e.g.
         # ["sarcastic", "sighs"] + "We did it." -> "[sarcastic] [sighs] We did it."
@@ -53,7 +56,7 @@ class ElevenLabsProvider:
 
         # The expressive controls come straight from the brain (already clamped).
         response = httpx.post(
-            f"{ELEVENLABS_URL}/{self.voice_id}",
+            f"{ELEVENLABS_URL}/{voice_id}",
             headers={
                 "xi-api-key": self.api_key,
                 "Content-Type": "application/json",
@@ -92,9 +95,10 @@ class PiperProvider:
             self._voice = PiperVoice.load(str(PIPER_MODEL))
         return self._voice
 
-    def synthesize(self, text: str, settings: dict, tags: list) -> bytes:
-        """Render text to WAV bytes. Piper can only honor speed; it ignores the
-        expressive controls (stability/style) and the audio tags."""
+    def synthesize(self, text: str, settings: dict, tags: list, voice: str = "") -> bytes:
+        """Render text to WAV bytes. Piper has only its one local model, so it
+        ignores the chosen `voice`, the expressive controls (stability/style),
+        and the audio tags — it can only honor speed."""
         # Piper's length_scale stretches time, so it's the inverse of speed:
         # faster speech = shorter = smaller length_scale.
         config = SynthesisConfig(length_scale=1.0 / settings["speed"])

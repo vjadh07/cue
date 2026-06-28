@@ -2,7 +2,7 @@
 // all browser-only — so this is a Client Component.
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Where the Python backend is listening. For now this is hard-coded.
 const BACKEND_URL = "http://localhost:8000";
@@ -20,6 +20,9 @@ type DirectedLine = {
   brain: string;
 };
 
+// An ElevenLabs voice the picker can offer (shape /voices returns).
+type Voice = { id: string; name: string; description: string };
+
 const SETTING_KEYS: { key: keyof Settings; label: string }[] = [
   { key: "stability", label: "STA" },
   { key: "style", label: "STY" },
@@ -34,6 +37,11 @@ export default function Home() {
   const [directing, setDirecting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
+  // The actor: voices come from the backend (your ElevenLabs account), and
+  // `voice` is the selected voice_id, sent to /render at playback.
+  const [voices, setVoices] = useState<Voice[]>([]);
+  const [voice, setVoice] = useState("");
+
   // Which line is mid-render (waiting on /render) and which is playing. Only one
   // line plays at a time — we reuse a single <audio> element.
   const [loadingLine, setLoadingLine] = useState<number | null>(null);
@@ -43,6 +51,19 @@ export default function Home() {
   // The line we're about to play, so onPlay knows which one started without
   // depending on possibly-stale state.
   const pendingLine = useRef<number | null>(null);
+
+  // Load the available voices once, and preselect the backend's default.
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/voices`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((data: { voices: Voice[]; default: string }) => {
+        setVoices(data.voices);
+        setVoice(data.default);
+      })
+      .catch(() => {
+        /* leave the picker empty; renders just use the backend default */
+      });
+  }, []);
 
   // Direct: send the whole script + one direction, get back a per-line read.
   // No audio is rendered here — that happens lazily when you press Play.
@@ -84,7 +105,7 @@ export default function Home() {
       const response = await fetch(`${BACKEND_URL}/render`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: line.text, settings: line.settings, tags: line.tags }),
+        body: JSON.stringify({ text: line.text, settings: line.settings, tags: line.tags, voice }),
       });
       if (!response.ok) throw new Error(`Render failed (${response.status})`);
       const data = { audio_id: "", ext: "", ...(await response.json()) };
@@ -130,6 +151,27 @@ export default function Home() {
           English. The brain reads the whole script and performs each line for where
           it sits in the arc.
         </p>
+
+        {/* Voice picker — the actor for the whole read. */}
+        {voices.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <label htmlFor="voice" className="font-mono text-[11px] uppercase tracking-[0.15em] text-zinc-400">
+              Voice
+            </label>
+            <select
+              id="voice"
+              value={voice}
+              onChange={(e) => setVoice(e.target.value)}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950/60 px-4 py-3 text-base text-zinc-100 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
+            >
+              {voices.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Script input */}
         <div className="flex flex-col gap-2">

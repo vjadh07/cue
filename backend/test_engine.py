@@ -16,9 +16,11 @@ class FakeProvider:
         self.ext = ext
         self.fail = fail
         self.calls = 0
+        self.last_voice = None
 
-    def synthesize(self, text, settings, tags):
+    def synthesize(self, text, settings, tags, voice=""):
         self.calls += 1
+        self.last_voice = voice
         if self.fail:
             raise RuntimeError(f"{self.name} failed")
         return f"{self.name}-audio".encode()
@@ -87,3 +89,24 @@ def test_raises_when_all_providers_fail(tmp_path):
         assert False, "expected an error when every provider fails"
     except RuntimeError:
         pass
+
+
+def test_render_passes_voice_to_provider(tmp_path):
+    el = FakeProvider("elevenlabs", "mp3")
+    engine = Engine([el], AudioCache(tmp_path))
+
+    engine.render("hello", S, TAGS, voice="george")
+
+    assert el.last_voice == "george"
+
+
+def test_different_voice_is_a_different_render(tmp_path):
+    # Same line/settings/tags but a different voice must not reuse the cache.
+    cache = AudioCache(tmp_path)
+    a = Engine([FakeProvider("elevenlabs", "mp3")], cache)
+    b = Engine([FakeProvider("elevenlabs", "mp3")], cache)
+
+    r1 = a.render("hello", S, TAGS, voice="george")
+    r2 = b.render("hello", S, TAGS, voice="sarah")
+
+    assert r1["audio_id"] != r2["audio_id"]

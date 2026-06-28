@@ -29,6 +29,16 @@ def test_key_changes_with_each_input(tmp_path):
     assert cache.key("piper", S, "hello", ["sarcastic"]) != base               # tags
 
 
+def test_voice_changes_the_key(tmp_path):
+    # A different ElevenLabs voice is a different render, so it must key apart.
+    cache = AudioCache(tmp_path)
+    base = cache.key("elevenlabs", S, "hello", NO_TAGS)  # default voice
+    assert cache.key("elevenlabs", S, "hello", NO_TAGS, voice="abc") != base
+    assert cache.key("elevenlabs", S, "hello", NO_TAGS, voice="abc") == cache.key(
+        "elevenlabs", S, "hello", NO_TAGS, voice="abc"
+    )
+
+
 def test_volume_does_not_affect_the_key(tmp_path):
     # Volume is applied at playback, so it must not change the cached render.
     cache = AudioCache(tmp_path)

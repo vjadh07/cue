@@ -6,9 +6,11 @@ direction into voice settings (Step 2), then generates real audio for the line
 inputs, so an identical line is reused instead of re-generated.
 """
 
+import os
 import re
 from pathlib import Path
 
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +23,7 @@ load_dotenv(Path(__file__).parent / ".env")
 from brains import BrainEngine, GroqBrain, KeywordBrain, OllamaBrain
 from cache import AudioCache
 from engine import Engine
-from providers import ElevenLabsProvider, PiperProvider
+from providers import DEFAULT_VOICE_ID, ElevenLabsProvider, PiperProvider
 from script import split_lines
 from settings import clean, clean_tags
 
@@ -66,6 +68,18 @@ class RenderRequest(BaseModel):
     text: str
     settings: dict = {}
     tags: list[str] = []
+    voice: str = ""  # an ElevenLabs voice_id; empty = the default voice
+
+
+# Shown in the voice dropdown when ElevenLabs can't be reached (no key, offline,
+# out of quota) so the picker is never empty. A handful of stable premade voices.
+FALLBACK_VOICES = [
+    {"id": "JBFqnCBsd6RMkjVDRZzb", "name": "George", "description": "Warm storyteller (British)"},
+    {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Sarah", "description": "Mature, reassuring, confident"},
+    {"id": "IKne3meq5aSn9XLyUdCD", "name": "Charlie", "description": "Deep, energetic (Australian)"},
+    {"id": "Xb7hH8MSUJpSbSDYk0k2", "name": "Alice", "description": "Clear educator (British)"},
+    {"id": "SAz9YHcvj6GT2YYXdXww", "name": "River", "description": "Relaxed, neutral, informative"},
+]
 
 
 @app.get("/")
@@ -129,7 +143,36 @@ def render(request: RenderRequest):
     # The settings/tags came from the client, so re-clean them before the voice.
     settings = clean(request.settings)
     tags = clean_tags(request.tags)
-    return voice_engine.render(text, settings, tags)
+    return voice_engine.render(text, settings, tags, request.voice)
+
+
+@app.get("/voices")
+def voices():
+    """The voices the picker offers — the ones in your ElevenLabs account
+    (premade + any you've saved or created). Falls back to a small curated list
+    if ElevenLabs can't be reached, so the dropdown is never empty."""
+    default = os.environ.get("ELEVENLABS_VOICE_ID", DEFAULT_VOICE_ID)
+    key = os.environ.get("ELEVENLABS_API_KEY", "")
+    if key:
+        try:
+            response = httpx.get(
+                "https://api.elevenlabs.io/v1/voices",
+                headers={"xi-api-key": key},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            mapped = []
+            for v in response.json().get("voices", []):
+                labels = v.get("labels") or {}
+                description = labels.get("description") or labels.get("use_case") or ""
+                mapped.append(
+                    {"id": v["voice_id"], "name": v.get("name", v["voice_id"]), "description": description}
+                )
+            if mapped:
+                return {"voices": mapped, "default": default}
+        except Exception:
+            pass  # fall through to the curated list
+    return {"voices": FALLBACK_VOICES, "default": default}
 
 
 @app.get("/audio/{filename}")
