@@ -26,6 +26,7 @@ from engine import Engine
 from providers import DEFAULT_VOICE_ID, ElevenLabsProvider, PiperProvider
 from script import split_lines
 from settings import clean, clean_tags
+from voices import usable_voices
 
 app = FastAPI()
 
@@ -161,13 +162,10 @@ def voices():
                 timeout=10.0,
             )
             response.raise_for_status()
-            mapped = []
-            for v in response.json().get("voices", []):
-                labels = v.get("labels") or {}
-                description = labels.get("description") or labels.get("use_case") or ""
-                mapped.append(
-                    {"id": v["voice_id"], "name": v.get("name", v["voice_id"]), "description": description}
-                )
+            # Only the voices the free-tier API can actually render (premade +
+            # your own); library 'professional' voices 402 and would fall back
+            # to the wrong voice.
+            mapped = usable_voices(response.json().get("voices", []))
             if mapped:
                 return {"voices": mapped, "default": default}
         except Exception:
