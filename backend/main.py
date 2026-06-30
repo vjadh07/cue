@@ -24,7 +24,7 @@ from brains import BrainEngine, GroqBrain, KeywordBrain, OllamaBrain
 from cache import AudioCache
 from engine import Engine
 from providers import DEFAULT_VOICE_ID, ElevenLabsProvider, PiperProvider
-from script import split_lines
+from script import parse_script, speakers
 from settings import clean, clean_tags
 from voices import usable_voices
 
@@ -112,23 +112,27 @@ def speak(request: SpeakRequest):
 
 @app.post("/direct")
 def direct(request: DirectRequest):
-    """Step 4b: restyle a whole script under one direction. Splits the pasted
-    block into lines and interprets each one with the full script as context
-    (so the direction can ramp across the arc). Brain only — no audio is rendered
-    here, so this is fast and spends no ElevenLabs credits."""
-    lines = split_lines(request.script)
-    interpretations = brain_engine.interpret_script(lines, request.direction)
+    """Restyle a whole script under one direction. Parses the pasted block into
+    speaker-attributed lines (`NAME: text`, or no speaker for a plain read) and
+    interprets each line's text with the full script as context, so the direction
+    can ramp across the arc. Brain only — no audio is rendered here, so this is
+    fast and spends no ElevenLabs credits."""
+    parsed = parse_script(request.script)
+    texts = [line["text"] for line in parsed]
+    interpretations = brain_engine.interpret_script(texts, request.direction)
     return {
         "lines": [
             {
-                "text": line,
+                "speaker": line["speaker"],
+                "text": line["text"],
                 "settings": result["settings"],
                 "tags": result["tags"],
                 "notes": result["notes"],
                 "brain": result["brain"],
             }
-            for line, result in zip(lines, interpretations)
-        ]
+            for line, result in zip(parsed, interpretations)
+        ],
+        "speakers": speakers(parsed),
     }
 
 
