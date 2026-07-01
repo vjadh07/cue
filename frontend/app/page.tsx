@@ -12,7 +12,10 @@ const BACKEND_URL = "http://localhost:8000";
 type Settings = { stability: number; style: number; speed: number; volume: number };
 
 // One line after the brain has restyled it (the shape /direct returns per line).
+// `speaker` is the character for a conversational line, or null for a plain
+// (narrator) line.
 type DirectedLine = {
+  speaker: string | null;
   text: string;
   settings: Settings;
   tags: string[];
@@ -41,6 +44,10 @@ export default function Home() {
   // `voice` is the selected voice_id, sent to /render at playback.
   const [voices, setVoices] = useState<Voice[]>([]);
   const [voice, setVoice] = useState("");
+
+  // For conversational scripts: each named speaker -> a voice_id. Unlabeled
+  // (narrator) lines use `voice`.
+  const [cast, setCast] = useState<Record<string, string>>({});
 
   // Which line is mid-render (waiting on /render) and which is playing. Only one
   // line plays at a time — we reuse a single <audio> element.
@@ -82,8 +89,15 @@ export default function Home() {
         body: JSON.stringify({ script, direction }),
       });
       if (!response.ok) throw new Error(`Backend responded with ${response.status}`);
-      const data: { lines: DirectedLine[] } = await response.json();
+      const data: { lines: DirectedLine[]; speakers: string[] } = await response.json();
       setLines(data.lines);
+      // Seed any newly-seen speaker with the narrator voice, so every line has a
+      // valid voice; the user can then reassign each character in the Cast panel.
+      setCast((prev) => {
+        const next = { ...prev };
+        for (const s of data.speakers) if (!next[s]) next[s] = voice;
+        return next;
+      });
     } catch (err) {
       setErrorMessage(
         err instanceof Error ? `Couldn't direct the script: ${err.message}` : "Couldn't direct the script."
@@ -97,6 +111,9 @@ export default function Home() {
   // then play. Reusing the same <audio> means a new Play interrupts the last.
   async function handlePlay(i: number) {
     const line = lines[i];
+    // A labeled line uses its character's voice; an unlabeled line uses the
+    // narrator voice.
+    const lineVoice = line.speaker ? cast[line.speaker] ?? voice : voice;
     setErrorMessage("");
     pendingLine.current = i;
     setLoadingLine(i);
@@ -105,7 +122,7 @@ export default function Home() {
       const response = await fetch(`${BACKEND_URL}/render`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: line.text, settings: line.settings, tags: line.tags, voice }),
+        body: JSON.stringify({ text: line.text, settings: line.settings, tags: line.tags, voice: lineVoice }),
       });
       if (!response.ok) throw new Error(`Render failed (${response.status})`);
       const data = { audio_id: "", ext: "", ...(await response.json()) };
@@ -124,6 +141,10 @@ export default function Home() {
   }
 
   const anyPlaying = playingLine !== null;
+  // The distinct named characters in the directed script, in first-seen order.
+  const castList = Array.from(
+    new Set(lines.map((l) => l.speaker).filter((s): s is string => Boolean(s)))
+  );
 
   return (
     <main className="min-h-[100dvh] flex justify-center px-6 py-16">
@@ -149,14 +170,15 @@ export default function Home() {
         <p className="text-sm leading-relaxed text-zinc-400">
           Paste a script — one line per row — then give a single direction in plain
           English. The brain reads the whole script and performs each line for where
-          it sits in the arc.
+          it sits in the arc. Prefix a line with a name (<span className="font-mono text-zinc-300">ALICE:</span>)
+          to make it a conversation and give each character their own voice.
         </p>
 
         {/* Voice picker — the actor for the whole read. */}
         {voices.length > 0 && (
           <div className="flex flex-col gap-2">
             <label htmlFor="voice" className="font-mono text-[11px] uppercase tracking-[0.15em] text-zinc-400">
-              Voice
+              {castList.length > 0 ? "Narrator voice" : "Voice"}
             </label>
             <select
               id="voice"
@@ -216,6 +238,33 @@ export default function Home() {
           </p>
         )}
 
+        {/* Cast: one voice per character (only for conversational scripts). */}
+        {castList.length > 0 && voices.length > 0 && (
+          <div className="flex flex-col gap-3 border-t border-zinc-800 pt-5">
+            <span className="font-mono text-[11px] uppercase tracking-[0.15em] text-zinc-400">
+              Cast
+            </span>
+            {castList.map((speaker) => (
+              <div key={speaker} className="flex items-center gap-3">
+                <span className="w-24 shrink-0 truncate font-mono text-xs uppercase tracking-[0.1em] text-amber-300/90">
+                  {speaker}
+                </span>
+                <select
+                  value={cast[speaker] ?? voice}
+                  onChange={(e) => setCast((prev) => ({ ...prev, [speaker]: e.target.value }))}
+                  className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
+                >
+                  {voices.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* The directed script: a card per line. */}
         {lines.length > 0 && (
           <div className="flex flex-col gap-3 border-t border-zinc-800 pt-5">
@@ -231,7 +280,14 @@ export default function Home() {
                   }
                 >
                   <div className="flex items-start justify-between gap-4">
-                    <p className="text-base leading-relaxed text-zinc-100">{line.text}</p>
+                    <div className="flex flex-col gap-1">
+                      {line.speaker && (
+                        <span className="font-mono text-[11px] uppercase tracking-[0.1em] text-amber-300/70">
+                          {line.speaker}
+                        </span>
+                      )}
+                      <p className="text-base leading-relaxed text-zinc-100">{line.text}</p>
+                    </div>
                     <button
                       onClick={() => handlePlay(i)}
                       disabled={isLoading}
