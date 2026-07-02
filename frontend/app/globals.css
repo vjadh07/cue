@@ -1,27 +1,110 @@
 @import "tailwindcss";
 
-/* Cue is a studio control room: the theme is locked to dark, on purpose, so it
-   doesn't flip with the OS light/dark setting. */
+/* Cue is a precision workshop: the whole interface sits on a green
+   self-healing cutting mat (the committed surface that carries the identity),
+   and panels rest on it like tools. Locked dark on purpose — it never flips
+   with the OS setting.
+
+   Contrast notes (WCAG AA):
+   - --ink   on --panel  ≈ 12:1   (script text)
+   - --ink-2 on --panel  ≈  8:1   (secondary)
+   - --ink-3 on --panel-2 ≈ 4.9:1 (labels, placeholders)
+   - --chalk on --mat    ≈ 4.8:1  (markings printed on the mat)
+   - near-black on --cue ≈  9:1   (primary buttons) */
 :root {
-  --background: #0a0a0b;
-  --foreground: #f4f4f5;
+  /* The mat and its printed markings: a green-tinted charcoal, like a
+     well-used dark cutting mat under studio light. */
+  --mat: oklch(0.23 0.022 170);
+  --mat-line: oklch(0.95 0.02 165 / 0.06); /* fine grid */
+  --mat-line-strong: oklch(0.95 0.02 165 / 0.11); /* every 5th line */
+  --chalk: oklch(0.9 0.025 165);
+
+  /* Tool surfaces laid on the mat — a step lighter, so they sit ON it */
+  --panel: oklch(0.28 0.022 170);
+  --panel-2: oklch(0.175 0.018 170);
+  --edge: oklch(0.85 0.03 165 / 0.16);
+  --edge-strong: oklch(0.85 0.03 165 / 0.3);
+
+  /* Text */
+  --ink: oklch(0.96 0.01 165);
+  --ink-2: oklch(0.84 0.02 165);
+  --ink-3: oklch(0.72 0.03 165);
+
+  /* The cue light — amber means "we're live" */
+  --cue: oklch(0.83 0.14 85);
+  --cue-bright: oklch(0.87 0.14 88);
+  --cue-deep: oklch(0.62 0.12 75);
+  --cue-ink: oklch(0.24 0.05 80);
+
+  --danger: oklch(0.74 0.16 25);
+
+  --background: var(--mat);
+  --foreground: var(--ink);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-mat: var(--mat);
+  --color-chalk: var(--chalk);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-edge: var(--edge);
+  --color-edge-strong: var(--edge-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-cue: var(--cue);
+  --color-cue-bright: var(--cue-bright);
+  --color-cue-deep: var(--cue-deep);
+  --color-cue-ink: var(--cue-ink);
+  --color-danger: var(--danger);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  color: var(--ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  /* The mat itself: fine self-healing grid, with a stronger line every 5th
+     cell, exactly like the real thing. Fixed so tools scroll over the mat. */
+  background-color: var(--mat);
+  background-image:
+    linear-gradient(var(--mat-line-strong) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mat-line-strong) 1px, transparent 1px),
+    linear-gradient(var(--mat-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mat-line) 1px, transparent 1px);
+  background-size:
+    180px 180px,
+    180px 180px,
+    36px 36px,
+    36px 36px;
+  background-attachment: fixed;
 }
 
-/* Equalizer bars under the Play button. They animate only while speaking, to
-   give visual feedback that the voice is playing. */
+/* The mat's 45° bias guides: two faint crossing hairlines, like the printed
+   diagonals on a real cutting mat. Decorative only. */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  left: -60vmax;
+  top: 50%;
+  width: 220vmax;
+  height: 1px;
+  background: oklch(0.95 0.02 165 / 0.05);
+  pointer-events: none;
+  z-index: 0;
+}
+body::before {
+  transform: rotate(45deg);
+}
+body::after {
+  transform: rotate(-45deg);
+}
+
+/* Equalizer bars in the take panel. They animate only while audio is playing —
+   motion as state, never decoration. */
 @keyframes cue-eq {
   0%,
   100% {
@@ -32,10 +115,13 @@ body {
   }
 }
 
-/* Accessibility: people who prefer reduced motion get still bars, not a dance. */
+/* People who prefer reduced motion get still bars, not a dance. */
 @media (prefers-reduced-motion: reduce) {
   .cue-eq-bar {
     animation: none !important;
     transform: scaleY(0.4) !important;
+  }
+  * {
+    transition-duration: 0.01ms !important;
   }
 }
