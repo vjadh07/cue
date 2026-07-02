@@ -15,6 +15,7 @@ import os
 import httpx
 
 from direction import interpret as keyword_interpret
+from script import clean_generated
 from settings import clean, clean_tags, TAG_WHITELIST
 
 # The director brief. Definitions are explicit because the whole point is that
@@ -50,6 +51,29 @@ FEW_SHOT = [
         "content": '{"tags": ["tired", "sighs"], "stability": 0.85, "style": 0.2, "speed": 0.9, "volume": 0.85, "notes": "flat, weary"}',
     },
 ]
+
+
+# The screenwriter brief, for composing a script FROM a premise (the reverse of
+# directing: here the brain writes the material, the user then directs it).
+WRITER_PROMPT = (
+    "You write short scripts for Cue, a voice-direction tool. Given a premise, "
+    "write a script of 4-8 short lines to be performed aloud.\n"
+    "Rules:\n"
+    "- Each line on its own row.\n"
+    "- Dialogue lines are written `NAME: line` (short uppercase names).\n"
+    "- Narration lines are plain text with no label.\n"
+    "- No stage directions, headings, markdown, numbering, or surrounding quotes.\n"
+    "- Every line must be speakable, emotionally distinct, and the script "
+    "should have an arc.\n"
+    "Output only the script."
+)
+
+
+def _writer_messages(premise: str) -> list[dict]:
+    return [
+        {"role": "system", "content": WRITER_PROMPT},
+        {"role": "user", "content": f"Premise: {premise}"},
+    ]
 
 
 def _build_messages(
@@ -122,6 +146,20 @@ class OllamaBrain:
         response.raise_for_status()
         return _parse_director_json(response.json()["message"]["content"])
 
+    def compose(self, premise: str) -> str:
+        """Write a short script from a premise (plain text, not JSON)."""
+        response = httpx.post(
+            f"{self.url}/api/chat",
+            json={
+                "model": self.model,
+                "stream": False,
+                "messages": _writer_messages(premise),
+            },
+            timeout=60.0,
+        )
+        response.raise_for_status()
+        return clean_generated(response.json()["message"]["content"])
+
 
 class GroqBrain:
     """Cloud LLM via Groq's OpenAI-compatible API. Groq runs models on custom
@@ -165,6 +203,23 @@ class GroqBrain:
         )
         response.raise_for_status()
         return _parse_director_json(response.json()["choices"][0]["message"]["content"])
+
+    def compose(self, premise: str) -> str:
+        """Write a short script from a premise (plain text, not JSON)."""
+        if not self.api_key:
+            raise RuntimeError("GROQ_API_KEY not set")
+        response = httpx.post(
+            self.url,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            json={
+                "model": self.model,
+                "messages": _writer_messages(premise),
+                "temperature": 0.9,  # writing wants more spark than directing
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return clean_generated(response.json()["choices"][0]["message"]["content"])
 
 
 class KeywordBrain:
@@ -221,3 +276,16 @@ class BrainEngine:
             self.interpret(line, direction, script=lines, index=i)
             for i, line in enumerate(lines)
         ]
+
+    def compose(self, premise: str) -> str:
+        """Write a script from a premise. Only LLM brains can write (the keyword
+        matcher has no compose), so unlike interpret there's no safe neutral
+        answer — if every writer fails, that's an error the caller must surface."""
+        for brain in self.brains:
+            if not hasattr(brain, "compose"):
+                continue
+            try:
+                return brain.compose(premise)
+            except Exception:
+                continue  # this writer is down — try the next
+        raise RuntimeError("no brain available to write a script")

@@ -79,6 +79,12 @@ class ReadRequest(BaseModel):
     lines: list[RenderRequest]
 
 
+class WriteRequest(BaseModel):
+    # A premise for the brain to write a script from ("a tense breakup on a
+    # train platform, two people").
+    premise: str
+
+
 # Shown in the voice dropdown when ElevenLabs can't be reached (no key, offline,
 # out of quota) so the picker is never empty. A handful of stable premade voices.
 FALLBACK_VOICES = [
@@ -156,6 +162,23 @@ def render(request: RenderRequest):
     settings = clean(request.settings)
     tags = clean_tags(request.tags)
     return voice_engine.render(text, settings, tags, request.voice)
+
+
+@app.post("/write")
+def write(request: WriteRequest):
+    """Have the brain WRITE the material: premise in, short performable script
+    out (with NAME: labels when it's dialogue). Only the LLM brains can write,
+    so if none is reachable this is a plain error, not a silent fallback."""
+    premise = request.premise.strip()
+    if not premise:
+        raise HTTPException(status_code=400, detail="premise is required")
+    try:
+        script = brain_engine.compose(premise)
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="no brain available to write")
+    if not script:
+        raise HTTPException(status_code=502, detail="the brain wrote an empty script")
+    return {"script": script}
 
 
 @app.post("/read")

@@ -33,6 +33,27 @@ def parse_script(block: str) -> list[dict]:
     return result
 
 
+MAX_GENERATED_LINES = 12
+
+# Decoration LLMs sneak into "plain text": leading list numbers/bullets.
+_NUMBERING_RE = re.compile(r"^(\d+[.)]|[-*•])\s+")
+
+
+def clean_generated(raw: str) -> str:
+    """Sanitize an LLM-written script into plain performable lines: no markdown
+    fences, headings, numbering, or blank rows — and never longer than
+    MAX_GENERATED_LINES, however chatty the model felt."""
+    lines = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("```"):
+            continue
+        if line.startswith("#") or (line.startswith("**") and line.endswith("**")):
+            continue  # a heading, not a spoken line
+        lines.append(_NUMBERING_RE.sub("", line))
+    return "\n".join(lines[:MAX_GENERATED_LINES])
+
+
 def speakers(parsed: list[dict]) -> list[str]:
     """The distinct named speakers, in first-seen order — what the UI needs to
     ask which voice each character should use. Unlabeled (None) lines are not

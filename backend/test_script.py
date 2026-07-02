@@ -2,7 +2,7 @@
 and into speaker-attributed lines for conversational scripts. Pure logic, so a
 straight test-first target."""
 
-from script import parse_script, speakers, split_lines
+from script import clean_generated, parse_script, speakers, split_lines
 
 
 def test_splits_on_newlines():
@@ -76,3 +76,25 @@ def test_speakers_lists_distinct_names_in_order():
 
 def test_speakers_empty_when_no_labels():
     assert speakers(parse_script("just a plain read")) == []
+
+
+# --- clean_generated: sanitizing an LLM-written script ---
+
+
+def test_clean_generated_strips_markdown_fences_and_blanks():
+    raw = "```\nALICE: Hi.\n\nBOB: Hey.\n```"
+    assert clean_generated(raw) == "ALICE: Hi.\nBOB: Hey."
+
+
+def test_clean_generated_drops_headings_and_numbering():
+    raw = "**The Scene**\n1. ALICE: Hi.\n2. BOB: Hey."
+    assert clean_generated(raw) == "ALICE: Hi.\nBOB: Hey."
+
+
+def test_clean_generated_caps_length():
+    raw = "\n".join(f"Line {i}." for i in range(30))
+    assert len(clean_generated(raw).splitlines()) == 12
+
+
+def test_clean_generated_empty_input_is_empty():
+    assert clean_generated("```\n\n```") == ""
