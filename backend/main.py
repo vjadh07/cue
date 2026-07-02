@@ -26,6 +26,7 @@ from engine import Engine
 from providers import DEFAULT_VOICE_ID, ElevenLabsProvider, PiperProvider
 from script import parse_script, speakers
 from settings import clean, clean_tags
+from stitch import stitch, stitch_key
 from voices import usable_voices
 
 app = FastAPI()
@@ -70,6 +71,12 @@ class RenderRequest(BaseModel):
     settings: dict = {}
     tags: list[str] = []
     voice: str = ""  # an ElevenLabs voice_id; empty = the default voice
+
+
+class ReadRequest(BaseModel):
+    # The whole directed script, ready to perform: each line with the settings,
+    # tags, and voice it should be rendered with. Order = playback order.
+    lines: list[RenderRequest]
 
 
 # Shown in the voice dropdown when ElevenLabs can't be reached (no key, offline,
@@ -151,6 +158,39 @@ def render(request: RenderRequest):
     return voice_engine.render(text, settings, tags, request.voice)
 
 
+@app.post("/read")
+def read(request: ReadRequest):
+    """Step 5: perform the whole script as ONE continuous track. Renders every
+    line (cache -> ElevenLabs/Piper) in its own voice, then stitches the clips
+    together with a natural pause between lines. The stitched track is cached
+    too, so replaying an unchanged read is free — and it's the same file the
+    Download button serves."""
+    if not request.lines:
+        raise HTTPException(status_code=400, detail="lines are required")
+
+    clips = []
+    volumes = []
+    for line in request.lines:
+        text = line.text.strip()
+        if not text:
+            continue
+        settings = clean(line.settings)
+        rendered = voice_engine.render(text, settings, clean_tags(line.tags), line.voice)
+        clips.append(rendered)
+        # Clips are rendered volume-free (volume is a playback concern), so the
+        # line's volume is baked into the stitched track as gain instead.
+        volumes.append(settings["volume"])
+    if not clips:
+        raise HTTPException(status_code=400, detail="lines are required")
+
+    key = stitch_key([c["audio_id"] for c in clips], volumes=volumes)
+    if not cache.has(key, "mp3"):
+        paths = [cache.path(c["audio_id"], c["ext"]) for c in clips]
+        cache.write(key, "mp3", stitch(paths, volumes=volumes))
+        return {"audio_id": key, "ext": "mp3", "engine": "stitch", "cached": False}
+    return {"audio_id": key, "ext": "mp3", "engine": "stitch", "cached": True}
+
+
 @app.get("/voices")
 def voices():
     """The voices the picker offers — the ones in your ElevenLabs account
@@ -178,11 +218,15 @@ def voices():
 
 
 @app.get("/audio/{filename}")
-def get_audio(filename: str):
+def get_audio(filename: str, download: bool = False):
     if not SAFE_AUDIO_NAME.fullmatch(filename):
         raise HTTPException(status_code=404, detail="not found")
     audio_path = cache.cache_dir / filename
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="not found")
     media_type = "audio/wav" if filename.endswith(".wav") else "audio/mpeg"
+    if download:
+        # Content-Disposition: attachment — the browser saves it as a file
+        # instead of playing it.
+        return FileResponse(audio_path, media_type=media_type, filename="cue-read.mp3")
     return FileResponse(audio_path, media_type=media_type)

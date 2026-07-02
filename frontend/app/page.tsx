@@ -50,9 +50,16 @@ export default function Home() {
   const [cast, setCast] = useState<Record<string, string>>({});
 
   // Which line is mid-render (waiting on /render) and which is playing. Only one
-  // line plays at a time — we reuse a single <audio> element.
+  // line plays at a time — we reuse a single <audio> element. Index -1 means the
+  // stitched full read (not an individual line).
   const [loadingLine, setLoadingLine] = useState<number | null>(null);
   const [playingLine, setPlayingLine] = useState<number | null>(null);
+
+  // The stitched full-read track (its audio_id), once one has been made — this
+  // is what the Download link points at. Cleared whenever the script or a voice
+  // changes, because the track no longer matches what's on screen.
+  const [readTrack, setReadTrack] = useState<string | null>(null);
+  const [stitching, setStitching] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   // The line we're about to play, so onPlay knows which one started without
@@ -81,6 +88,7 @@ export default function Home() {
     setLines([]);
     setPlayingLine(null);
     setLoadingLine(null);
+    setReadTrack(null);
 
     try {
       const response = await fetch(`${BACKEND_URL}/direct`, {
@@ -107,13 +115,17 @@ export default function Home() {
     }
   }
 
+  // A labeled line uses its character's voice; an unlabeled line uses the
+  // narrator voice.
+  function voiceFor(line: DirectedLine) {
+    return line.speaker ? cast[line.speaker] ?? voice : voice;
+  }
+
   // Play one line: render it with the settings/tags it already got from /direct,
   // then play. Reusing the same <audio> means a new Play interrupts the last.
   async function handlePlay(i: number) {
     const line = lines[i];
-    // A labeled line uses its character's voice; an unlabeled line uses the
-    // narrator voice.
-    const lineVoice = line.speaker ? cast[line.speaker] ?? voice : voice;
+    const lineVoice = voiceFor(line);
     setErrorMessage("");
     pendingLine.current = i;
     setLoadingLine(i);
@@ -140,7 +152,46 @@ export default function Home() {
     }
   }
 
+  // Play the whole script as one continuous track: the backend renders every
+  // line in its voice (cached lines are free) and stitches them with pauses.
+  async function handleRead() {
+    setErrorMessage("");
+    setStitching(true);
+    pendingLine.current = -1; // the full read, not an individual line
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/read`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lines: lines.map((line) => ({
+            text: line.text,
+            settings: line.settings,
+            tags: line.tags,
+            voice: voiceFor(line),
+          })),
+        }),
+      });
+      if (!response.ok) throw new Error(`Stitch failed (${response.status})`);
+      const data: { audio_id: string; ext: string } = await response.json();
+      setReadTrack(data.audio_id);
+
+      const audio = audioRef.current;
+      if (!audio) throw new Error("Audio player not ready.");
+      audio.src = `${BACKEND_URL}/audio/${data.audio_id}.${data.ext}`;
+      audio.volume = 1.0; // per-line volume is baked into the stitched track as gain
+      await audio.play();
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? `Couldn't play the full read: ${err.message}` : "Couldn't play the full read."
+      );
+    } finally {
+      setStitching(false);
+    }
+  }
+
   const anyPlaying = playingLine !== null;
+  const readPlaying = playingLine === -1;
   // The distinct named characters in the directed script, in first-seen order.
   const castList = Array.from(
     new Set(lines.map((l) => l.speaker).filter((s): s is string => Boolean(s)))
@@ -183,7 +234,10 @@ export default function Home() {
             <select
               id="voice"
               value={voice}
-              onChange={(e) => setVoice(e.target.value)}
+              onChange={(e) => {
+                setVoice(e.target.value);
+                setReadTrack(null); // the stitched track no longer matches
+              }}
               className="w-full rounded-lg border border-zinc-700 bg-zinc-950/60 px-4 py-3 text-base text-zinc-100 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
             >
               {voices.map((v) => (
@@ -251,7 +305,10 @@ export default function Home() {
                 </span>
                 <select
                   value={cast[speaker] ?? voice}
-                  onChange={(e) => setCast((prev) => ({ ...prev, [speaker]: e.target.value }))}
+                  onChange={(e) => {
+                    setCast((prev) => ({ ...prev, [speaker]: e.target.value }));
+                    setReadTrack(null); // the stitched track no longer matches
+                  }}
                   className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950/60 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
                 >
                   {voices.map((v) => (
@@ -262,6 +319,27 @@ export default function Home() {
                 </select>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* The full read: play the whole script as one stitched track. */}
+        {lines.length > 0 && (
+          <div className="flex items-center gap-3 border-t border-zinc-800 pt-5">
+            <button
+              onClick={handleRead}
+              disabled={stitching}
+              className="rounded-lg bg-amber-400 px-5 py-2.5 text-sm font-semibold text-zinc-950 transition active:translate-y-px hover:bg-amber-300 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {stitching ? "Stitching…" : readPlaying ? "Playing…" : "▶ Play full read"}
+            </button>
+            {readTrack && (
+              <a
+                href={`${BACKEND_URL}/audio/${readTrack}.mp3?download=1`}
+                className="rounded-lg border border-zinc-700 px-5 py-2.5 text-sm font-semibold text-zinc-300 transition hover:border-amber-400/60 hover:text-amber-300"
+              >
+                Download
+              </a>
+            )}
           </div>
         )}
 

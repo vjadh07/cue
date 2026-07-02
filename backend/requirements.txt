@@ -3,6 +3,11 @@ uvicorn[standard]
 piper-tts
 httpx
 python-dotenv
+pydub
+
+# pydub needs ffmpeg on the PATH to decode/encode mp3 (used for stitching the
+# full read). Install it with:
+#   brew install ffmpeg
 
 # After installing, download the Piper voice model into backend/voices/ with:
 #   venv/bin/python -m piper.download_voices en_US-lessac-medium --download-dir voices
