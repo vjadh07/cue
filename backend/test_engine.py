@@ -11,17 +11,18 @@ TAGS = ["sarcastic"]
 
 
 class FakeProvider:
-    def __init__(self, name, ext, fail=False):
+    def __init__(self, name, ext, fail=False, fail_times=0):
         self.name = name
         self.ext = ext
-        self.fail = fail
+        self.fail = fail  # always fails
+        self.fail_times = fail_times  # fails the first N calls, then works
         self.calls = 0
         self.last_voice = None
 
     def synthesize(self, text, settings, tags, voice=""):
         self.calls += 1
         self.last_voice = voice
-        if self.fail:
+        if self.fail or self.calls <= self.fail_times:
             raise RuntimeError(f"{self.name} failed")
         return f"{self.name}-audio".encode()
 
@@ -48,8 +49,22 @@ def test_falls_back_when_first_provider_fails(tmp_path):
 
     assert result["engine"] == "piper"
     assert result["cached"] is False
-    assert el.calls == 1
+    assert el.calls == 2  # tried, retried once, then fell back
     assert piper.calls == 1
+
+
+def test_transient_failure_is_retried_not_fallen_back(tmp_path):
+    # One blip (rate limit, network hiccup) shouldn't dump the render onto the
+    # fallback voice: the same provider gets one retry first.
+    el = FakeProvider("elevenlabs", "mp3", fail_times=1)
+    piper = FakeProvider("piper", "wav")
+    engine = Engine([el, piper], AudioCache(tmp_path))
+
+    result = engine.render("hello", S, TAGS)
+
+    assert result["engine"] == "elevenlabs"
+    assert el.calls == 2  # failed once, retried, succeeded
+    assert piper.calls == 0
 
 
 def test_cache_hit_skips_all_synthesis(tmp_path):

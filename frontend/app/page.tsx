@@ -244,6 +244,26 @@ export default function Home() {
     }
   }
 
+  // Start a fresh session: wipe the whole workbench, including saved storage.
+  function handleClearMat() {
+    if (!window.confirm("Clear the mat? Script, chat, and cast will be wiped.")) return;
+    setScript("");
+    setDirection("");
+    setChatLog([]);
+    setChatInput("");
+    setLines([]);
+    setCast({});
+    setReadTrack(null);
+    setPlayingLine(null);
+    setLoadingLine(null);
+    setErrorMessage("");
+    try {
+      localStorage.removeItem("cue-workbench");
+    } catch {
+      /* best-effort */
+    }
+  }
+
   // Move a draft from the writer's room into production.
   function useDraft(draft: string) {
     setScript(draft);
@@ -392,13 +412,18 @@ export default function Home() {
             />
             <span className="text-xl font-semibold tracking-tight text-ink">Cue</span>
           </div>
-          {/* Printed on the mat like the maker's brand. */}
-          <span
-            aria-hidden="true"
-            className="hidden font-mono text-[10px] uppercase tracking-[0.18em] text-chalk/70 sm:block"
-          >
-            Control room · mat nº 001 · 24″ × 18″
-          </span>
+          <div className="flex items-center gap-4">
+            {/* Printed on the mat like the maker's brand. */}
+            <span
+              aria-hidden="true"
+              className="hidden font-mono text-[10px] uppercase tracking-[0.18em] text-chalk/70 sm:block"
+            >
+              Control room · mat nº 001 · 24″ × 18″
+            </span>
+            <button onClick={handleClearMat} className={BTN_QUIET + " px-3 py-1.5"}>
+              Clear mat
+            </button>
+          </div>
         </header>
 
         <p className="mb-8 max-w-[62ch] text-sm leading-relaxed text-chalk">

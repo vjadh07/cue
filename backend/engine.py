@@ -2,10 +2,17 @@
 
 It owns the policy: serve from cache if possible (in provider preference
 order), otherwise try each provider in order until one succeeds, caching the
-result. This is what gives Cue graceful degradation — ElevenLabs first, Piper
-when ElevenLabs is offline or out of quota — without the rest of the app caring
-which engine actually ran.
+result. A transient failure (rate limit, network blip) gets one retry before
+the engine falls back, so a single hiccup doesn't swap the voice out from
+under the user. This is what gives Cue graceful degradation — ElevenLabs
+first, Piper when ElevenLabs is truly down or out of quota — without the rest
+of the app caring which engine actually ran.
 """
+
+import time
+
+# One retry, after a short breath — enough for a rate-limit blip to pass.
+RETRY_DELAY_SECONDS = 0.4
 
 
 class Engine:
@@ -26,12 +33,18 @@ class Engine:
                     "cached": True,
                 }
 
-        # 2. Cache miss: try each provider in order until one succeeds.
+        # 2. Cache miss: try each provider (with one retry) until one succeeds.
         for provider in self.providers:
-            try:
-                audio = provider.synthesize(text, settings, tags, voice)
-            except Exception:
-                continue  # this engine is down/out of quota — try the next
+            audio = None
+            for attempt in range(2):
+                try:
+                    audio = provider.synthesize(text, settings, tags, voice)
+                    break
+                except Exception:
+                    if attempt == 0:
+                        time.sleep(RETRY_DELAY_SECONDS)  # let a blip pass, retry once
+            if audio is None:
+                continue  # truly down/out of quota — try the next provider
             key = self.cache.key(provider.name, settings, text, tags, voice)
             self.cache.write(key, provider.ext, audio)
             return {
