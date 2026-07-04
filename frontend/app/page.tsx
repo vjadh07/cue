@@ -28,6 +28,9 @@ type DirectedLine = {
 // An ElevenLabs voice the picker can offer (shape /voices returns).
 type Voice = { id: string; name: string; description: string };
 
+// One turn of the writer's-room chat. Assistant turns may carry a script draft.
+type ChatTurn = { role: "user" | "assistant"; text: string; script?: string | null };
+
 const SETTING_KEYS: { key: keyof Settings; label: string }[] = [
   { key: "stability", label: "STA" },
   { key: "style", label: "STY" },
@@ -113,9 +116,11 @@ export default function Home() {
   const [script, setScript] = useState("");
   const [direction, setDirection] = useState("");
 
-  // The scriptwriter: a premise the brain turns into a draft script.
-  const [premise, setPremise] = useState("");
-  const [writing, setWriting] = useState(false);
+  // The writer's room: a running chat with the brain. Each assistant turn may
+  // carry a script draft; nothing touches the Script box until "Use as script".
+  const [chatLog, setChatLog] = useState<ChatTurn[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatting, setChatting] = useState(false);
   const [lines, setLines] = useState<DirectedLine[]>([]);
   const [directing, setDirecting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -159,35 +164,49 @@ export default function Home() {
       });
   }, []);
 
-  // Write: the brain drafts a script from a premise, straight into the Script
-  // box — the user then directs it like any other material.
-  async function handleWrite() {
-    const idea = premise.trim();
-    if (!idea) return;
+  // One writer's-room turn: send the whole thread so "make it shorter" revises
+  // the brain's own last draft. The reply may carry a new draft.
+  async function handleChat() {
+    const said = chatInput.trim();
+    if (!said || chatting) return;
     setErrorMessage("");
-    setWriting(true);
+    setChatting(true);
+    setChatInput("");
+    const log = [...chatLog, { role: "user" as const, text: said }];
+    setChatLog(log);
 
     try {
-      const response = await fetch(`${BACKEND_URL}/write`, {
+      const response = await fetch(`${BACKEND_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ premise: idea }),
+        body: JSON.stringify({
+          // Assistant history includes its drafts, so the brain can revise them.
+          messages: log.map((t) => ({
+            role: t.role,
+            content: t.script ? `${t.text}\n\n${t.script}` : t.text,
+          })),
+        }),
       });
       if (!response.ok) throw new Error(`Backend responded with ${response.status}`);
-      const data: { script: string } = await response.json();
-      setScript(data.script);
-      // A new script invalidates the old read: clear the directed lines/track.
-      setLines([]);
-      setReadTrack(null);
-      setPlayingLine(null);
-      setLoadingLine(null);
+      const data: { message: string; script: string | null } = await response.json();
+      setChatLog((prev) => [...prev, { role: "assistant", text: data.message, script: data.script }]);
     } catch (err) {
       setErrorMessage(
-        err instanceof Error ? `Couldn't write a script: ${err.message}` : "Couldn't write a script."
+        err instanceof Error ? `The writer's room is down: ${err.message}` : "The writer's room is down."
       );
     } finally {
-      setWriting(false);
+      setChatting(false);
     }
+  }
+
+  // Move a draft from the writer's room into production.
+  function useDraft(draft: string) {
+    setScript(draft);
+    // A new script invalidates the old read: clear the directed lines/track.
+    setLines([]);
+    setReadTrack(null);
+    setPlayingLine(null);
+    setLoadingLine(null);
   }
 
   // Direct: send the whole script + one direction, get back a per-line read.
@@ -314,7 +333,7 @@ export default function Home() {
       {/* The mat's printed ruler, along the top edge. */}
       <Ruler />
 
-      <div className="mx-auto w-full max-w-3xl px-6 pb-24 pt-10">
+      <div className="mx-auto w-full max-w-6xl px-6 pb-24 pt-10">
         {/* Header: the cue light means "we're live". */}
         <header className="mb-10 flex items-end justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -346,9 +365,71 @@ export default function Home() {
 
         <div className="relative">
           <CornerMarks />
-          <div className="flex flex-col gap-5">
+          <div className="grid items-start gap-6 lg:grid-cols-[400px_minmax(0,1fr)]">
+            {/* The writer's room: chat with the brain to develop the material. */}
+            <div className="order-last lg:order-first lg:sticky lg:top-8">
+              <Panel title="Writer's room" meta="chat · drafts">
+                <div className="flex max-h-[55dvh] min-h-[160px] flex-col gap-3 overflow-y-auto pr-1">
+                  {chatLog.length === 0 && (
+                    <p className="text-sm leading-relaxed text-ink-3">
+                      Describe a scene — <span className="font-mono">“two rival chefs, one kitchen”</span> —
+                      and I&apos;ll draft it. Then direct the draft like a writer: “shorter”,
+                      “angrier ending”, “make BOB apologetic”.
+                    </p>
+                  )}
+                  {chatLog.map((turn, i) =>
+                    turn.role === "user" ? (
+                      <p key={i} className="font-mono text-xs leading-relaxed text-chalk">
+                        <span className="text-ink-3">&gt; </span>
+                        {turn.text}
+                      </p>
+                    ) : (
+                      <div key={i} className="flex flex-col gap-2">
+                        <p className="text-sm leading-relaxed text-ink-2">{turn.text}</p>
+                        {turn.script && (
+                          <div className="rounded border border-edge bg-panel-2 p-2.5">
+                            <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-ink">
+                              {turn.script}
+                            </pre>
+                            <button
+                              onClick={() => useDraft(turn.script!)}
+                              className={BTN_QUIET + " mt-2 py-1.5"}
+                            >
+                              Use as script →
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  )}
+                  {chatting && <p className="font-mono text-xs text-chalk/80">writing…</p>}
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <input
+                    aria-label="Message the writer's room"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleChat();
+                    }}
+                    placeholder="describe a scene, or ask for changes"
+                    className={FIELD + " py-2 text-sm"}
+                  />
+                  <button
+                    onClick={handleChat}
+                    disabled={chatting || chatInput.trim() === ""}
+                    className={BTN_QUIET + " shrink-0"}
+                  >
+                    Send
+                  </button>
+                </div>
+              </Panel>
+            </div>
+
+            {/* Production: the script and everything that performs it. */}
+            <div className="flex flex-col gap-5">
             {/* The material: the script itself. */}
-            <Panel title="Script" meta={lines.length > 0 ? `${lines.length} lines` : "or let the brain draft one"}>
+            <Panel title="Script" meta={lines.length > 0 ? `${lines.length} lines` : "or draft one in the writer's room"}>
               <textarea
                 id="script"
                 aria-label="Script"
@@ -358,26 +439,6 @@ export default function Home() {
                 placeholder={"It was already too late.\nALICE: Where were you?\nBOB: ...out."}
                 className={FIELD + " resize-y"}
               />
-              {/* The scriptwriter: premise in, draft script out. */}
-              <div className="mt-2.5 flex gap-2.5">
-                <input
-                  aria-label="Premise for the scriptwriter"
-                  value={premise}
-                  onChange={(e) => setPremise(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleWrite();
-                  }}
-                  placeholder="describe a scene — “two old friends, one hiding something”"
-                  className={FIELD + " py-2 text-sm"}
-                />
-                <button
-                  onClick={handleWrite}
-                  disabled={writing || premise.trim() === ""}
-                  className={BTN_QUIET + " shrink-0"}
-                >
-                  {writing ? "Writing…" : "✎ Write"}
-                </button>
-              </div>
             </Panel>
 
             {/* The direction and the narrator's voice, side by side. */}
@@ -550,6 +611,7 @@ export default function Home() {
                 })}
               </div>
             )}
+            </div>
           </div>
         </div>
 

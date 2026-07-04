@@ -135,33 +135,56 @@ def test_interpret_script_falls_back_per_line():
     assert a.calls == 2 and b.calls == 2
 
 
-# --- compose: the script writer (only LLM brains can write) ---
+# --- chat: the writer's room (only LLM brains can write) ---
 
 
 class FakeWriterBrain(FakeBrain):
-    def compose(self, premise):
+    def chat(self, messages):
         if self.fail:
             raise RuntimeError(f"{self.name} down")
-        return f"ALICE: {premise}"
+        return {"message": f"drafted by {self.name}", "script": "ALICE: Hi."}
 
 
-def test_compose_uses_first_writing_brain():
+def test_chat_uses_first_writing_brain():
     a, b = FakeWriterBrain("groq"), FakeWriterBrain("ollama")
-    assert BrainEngine([a, b]).compose("a storm") == "ALICE: a storm"
+    result = BrainEngine([a, b]).chat([{"role": "user", "content": "a storm"}])
+    assert result["message"] == "drafted by groq"
+    assert result["script"] == "ALICE: Hi."
 
 
-def test_compose_skips_brains_that_cannot_write():
-    # KeywordBrain-style brains have no compose(); the engine must skip them.
+def test_chat_skips_brains_that_cannot_write():
+    # KeywordBrain-style brains have no chat(); the engine must skip them.
     keyword = FakeBrain("keyword")
     writer = FakeWriterBrain("ollama")
-    assert BrainEngine([keyword, writer]).compose("hi") == "ALICE: hi"
+    assert BrainEngine([keyword, writer]).chat([{"role": "user", "content": "hi"}])["script"]
 
 
-def test_compose_falls_back_then_raises_when_no_writer_works():
+def test_chat_falls_back_then_raises_when_no_writer_works():
     a, b = FakeWriterBrain("groq", fail=True), FakeWriterBrain("ollama")
-    assert BrainEngine([a, b]).compose("hi") == "ALICE: hi"
+    assert BrainEngine([a, b]).chat([{"role": "user", "content": "hi"}])["message"]
     try:
-        BrainEngine([FakeWriterBrain("groq", fail=True), FakeBrain("keyword")]).compose("hi")
+        BrainEngine([FakeWriterBrain("groq", fail=True), FakeBrain("keyword")]).chat(
+            [{"role": "user", "content": "hi"}]
+        )
         assert False, "expected an error when no brain can write"
     except RuntimeError:
         pass
+
+
+# --- _parse_writer_json: the writer's structured reply ---
+
+
+def test_parse_writer_json_extracts_message_and_script():
+    from brains import _parse_writer_json
+
+    raw = '{"message": "Here you go.", "script": "```\\nALICE: Hi.\\n\\nBOB: Hey.\\n```"}'
+    result = _parse_writer_json(raw)
+    assert result["message"] == "Here you go."
+    assert result["script"] == "ALICE: Hi.\nBOB: Hey."  # cleaned like any generated script
+
+
+def test_parse_writer_json_script_absent_or_empty_is_none():
+    from brains import _parse_writer_json
+
+    assert _parse_writer_json('{"message": "What tone?"}')["script"] is None
+    assert _parse_writer_json('{"message": "hm", "script": ""}')["script"] is None

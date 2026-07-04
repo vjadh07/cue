@@ -53,27 +53,41 @@ FEW_SHOT = [
 ]
 
 
-# The screenwriter brief, for composing a script FROM a premise (the reverse of
-# directing: here the brain writes the material, the user then directs it).
+# The writer's-room brief: a conversational screenwriter (the reverse of
+# directing — here the brain writes the material, the user then directs it).
+# Replies are structured JSON so the app can tell chat from material.
 WRITER_PROMPT = (
-    "You write short scripts for Cue, a voice-direction tool. Given a premise, "
-    "write a script of 4-8 short lines to be performed aloud.\n"
-    "Rules:\n"
-    "- Each line on its own row.\n"
+    "You are the writer's-room assistant for Cue, a voice-direction tool. The "
+    "user chats with you to develop a short script to be performed aloud; you "
+    "draft and revise it as the conversation goes.\n\n"
+    "Always reply with ONLY a JSON object with two keys:\n"
+    '- "message": one or two conversational sentences (what you did, or a '
+    "question if you genuinely need an answer before writing).\n"
+    '- "script": the complete current draft whenever you write or revise '
+    "material, else null. Always the FULL script, not a diff.\n\n"
+    "Script rules:\n"
+    "- 4-10 short lines, each on its own row.\n"
     "- Dialogue lines are written `NAME: line` (short uppercase names).\n"
     "- Narration lines are plain text with no label.\n"
     "- No stage directions, headings, markdown, numbering, or surrounding quotes.\n"
-    "- Every line must be speakable, emotionally distinct, and the script "
-    "should have an arc.\n"
-    "Output only the script."
+    "- Every line must be speakable and emotionally distinct, with an arc."
 )
 
 
-def _writer_messages(premise: str) -> list[dict]:
-    return [
-        {"role": "system", "content": WRITER_PROMPT},
-        {"role": "user", "content": f"Premise: {premise}"},
-    ]
+def _writer_messages(messages: list[dict]) -> list[dict]:
+    return [{"role": "system", "content": WRITER_PROMPT}, *messages]
+
+
+def _parse_writer_json(content: str) -> dict:
+    """Turn the writer's JSON reply into {message, script|None}. The script goes
+    through clean_generated like any generated material, so markdown or an
+    over-long draft can't reach the Script box."""
+    data = json.loads(content)
+    script = clean_generated(str(data.get("script") or ""))
+    return {
+        "message": str(data.get("message", ""))[:400],
+        "script": script or None,
+    }
 
 
 def _build_messages(
@@ -146,19 +160,20 @@ class OllamaBrain:
         response.raise_for_status()
         return _parse_director_json(response.json()["message"]["content"])
 
-    def compose(self, premise: str) -> str:
-        """Write a short script from a premise (plain text, not JSON)."""
+    def chat(self, messages: list[dict]) -> dict:
+        """One writer's-room turn: full chat history in, {message, script} out."""
         response = httpx.post(
             f"{self.url}/api/chat",
             json={
                 "model": self.model,
                 "stream": False,
-                "messages": _writer_messages(premise),
+                "format": "json",
+                "messages": _writer_messages(messages),
             },
             timeout=60.0,
         )
         response.raise_for_status()
-        return clean_generated(response.json()["message"]["content"])
+        return _parse_writer_json(response.json()["message"]["content"])
 
 
 class GroqBrain:
@@ -204,8 +219,8 @@ class GroqBrain:
         response.raise_for_status()
         return _parse_director_json(response.json()["choices"][0]["message"]["content"])
 
-    def compose(self, premise: str) -> str:
-        """Write a short script from a premise (plain text, not JSON)."""
+    def chat(self, messages: list[dict]) -> dict:
+        """One writer's-room turn: full chat history in, {message, script} out."""
         if not self.api_key:
             raise RuntimeError("GROQ_API_KEY not set")
         response = httpx.post(
@@ -213,13 +228,14 @@ class GroqBrain:
             headers={"Authorization": f"Bearer {self.api_key}"},
             json={
                 "model": self.model,
-                "messages": _writer_messages(premise),
+                "messages": _writer_messages(messages),
+                "response_format": {"type": "json_object"},
                 "temperature": 0.9,  # writing wants more spark than directing
             },
             timeout=30.0,
         )
         response.raise_for_status()
-        return clean_generated(response.json()["choices"][0]["message"]["content"])
+        return _parse_writer_json(response.json()["choices"][0]["message"]["content"])
 
 
 class KeywordBrain:
@@ -277,15 +293,15 @@ class BrainEngine:
             for i, line in enumerate(lines)
         ]
 
-    def compose(self, premise: str) -> str:
-        """Write a script from a premise. Only LLM brains can write (the keyword
-        matcher has no compose), so unlike interpret there's no safe neutral
+    def chat(self, messages: list[dict]) -> dict:
+        """One writer's-room turn. Only LLM brains can write (the keyword
+        matcher has no chat), so unlike interpret there's no safe neutral
         answer — if every writer fails, that's an error the caller must surface."""
         for brain in self.brains:
-            if not hasattr(brain, "compose"):
+            if not hasattr(brain, "chat"):
                 continue
             try:
-                return brain.compose(premise)
+                return brain.chat(messages)
             except Exception:
                 continue  # this writer is down — try the next
         raise RuntimeError("no brain available to write a script")
