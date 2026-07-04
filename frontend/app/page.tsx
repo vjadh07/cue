@@ -90,10 +90,10 @@ function Ruler() {
 function MatClouds() {
   return (
     <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 hidden select-none overflow-hidden md:block">
-      <pre className="absolute -right-12 -top-8 font-mono text-[11px] leading-[13px] text-chalk/[0.06]">
+      <pre className="absolute -right-12 -top-8 font-mono text-[11px] leading-[13px] text-chalk/[0.1]">
         {MAT_CLOUD}
       </pre>
-      <pre className="absolute -bottom-10 -left-16 rotate-180 font-mono text-[10px] leading-[12px] text-chalk/[0.045]">
+      <pre className="absolute -bottom-10 -left-16 rotate-180 font-mono text-[10px] leading-[12px] text-chalk/[0.07]">
         {MAT_CLOUD}
       </pre>
     </div>
@@ -402,7 +402,7 @@ export default function Home() {
                       </div>
                     )
                   )}
-                  {chatting && <p className="font-mono text-xs text-chalk/80">writing…</p>}
+                  {chatting && <p className="font-mono text-xs text-chalk">writing…</p>}
                 </div>
                 <div className="mt-3 flex gap-2">
                   <input
@@ -481,7 +481,7 @@ export default function Home() {
                 {directing ? "Directing…" : "Direct"}
               </button>
               {directing && (
-                <span className="font-mono text-xs text-chalk/80">interpreting every line…</span>
+                <span className="font-mono text-xs text-chalk">interpreting every line…</span>
               )}
             </div>
 
