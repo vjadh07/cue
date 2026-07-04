@@ -13,8 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Cue",
-  description: "Direct an AI voice in plain English.",
+  title: "Cue · Control Room",
+  description:
+    "Direct an AI voice like a director talks to an actor — write, direct, cast, and stitch a performance in plain English.",
 };
 
 export default function RootLayout({

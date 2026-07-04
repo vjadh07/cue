@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- A black-and-white cassette tape, sticker-style: Cue's material is audio. -->
+  <!-- torn-sticker backing -->
+  <rect x="0.5" y="4" width="31" height="24" rx="2.5" fill="#f2efe8"/>
+  <!-- cassette body -->
+  <rect x="2" y="5.5" width="28" height="21" rx="2" fill="#151312"/>
+  <!-- upper label panel -->
+  <rect x="4.5" y="8" width="23" height="10.5" rx="1.5" fill="#c9c6bf"/>
+  <!-- spools -->
+  <circle cx="10.5" cy="13.2" r="3.1" fill="#f7f5f0" stroke="#151312" stroke-width="1.1"/>
+  <circle cx="21.5" cy="13.2" r="3.1" fill="#f7f5f0" stroke="#151312" stroke-width="1.1"/>
+  <circle cx="10.5" cy="13.2" r="1" fill="#151312"/>
+  <circle cx="21.5" cy="13.2" r="1" fill="#151312"/>
+  <!-- tape window between the spools -->
+  <rect x="13.9" y="11.4" width="4.2" height="3.6" fill="#151312"/>
+  <rect x="14.6" y="12.1" width="1.6" height="2.2" fill="#8a877f"/>
+  <!-- bottom guard with screw dots -->
+  <path d="M9 26.5 L11 21.5 H21 L23 26.5 Z" fill="#2b2826"/>
+  <circle cx="12.6" cy="24.4" r="0.8" fill="#f2efe8"/>
+  <circle cx="15.2" cy="24.4" r="0.8" fill="#f2efe8"/>
+  <circle cx="19.4" cy="24.4" r="0.8" fill="#f2efe8"/>
+  <!-- corner screws -->
+  <circle cx="4.2" cy="7.6" r="0.7" fill="#6e6b64"/>
+  <circle cx="27.8" cy="7.6" r="0.7" fill="#6e6b64"/>
+</svg>

@@ -150,14 +150,59 @@ export default function Home() {
   // The line we're about to play, so onPlay knows which one started without
   // depending on possibly-stale state.
   const pendingLine = useRef<number | null>(null);
+  // Don't write the workbench to storage until we've restored it — otherwise
+  // the first (empty) render would clobber the saved session.
+  const hydrated = useRef(false);
+  const threadRef = useRef<HTMLDivElement>(null);
 
-  // Load the available voices once, and preselect the backend's default.
+  // Keep the newest chat turn in view.
+  useEffect(() => {
+    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
+  }, [chatLog, chatting]);
+
+  // Restore the workbench: a refresh shouldn't lose your script, direction,
+  // chat thread, or cast. (Directed lines re-Direct cheaply, so they're not kept.)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("cue-workbench");
+      if (saved) {
+        const data = JSON.parse(saved);
+        if (typeof data.script === "string") setScript(data.script);
+        if (typeof data.direction === "string") setDirection(data.direction);
+        if (typeof data.voice === "string") setVoice(data.voice);
+        if (Array.isArray(data.chatLog)) setChatLog(data.chatLog);
+        if (data.cast && typeof data.cast === "object") setCast(data.cast);
+      }
+    } catch {
+      /* corrupt storage — start fresh */
+    }
+    hydrated.current = true;
+  }, []);
+
+  // Save the workbench (debounced, so typing doesn't hammer storage).
+  useEffect(() => {
+    if (!hydrated.current) return;
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(
+          "cue-workbench",
+          JSON.stringify({ script, direction, voice, chatLog, cast })
+        );
+      } catch {
+        /* storage full or blocked — persistence is best-effort */
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [script, direction, voice, chatLog, cast]);
+
+  // Load the available voices once. Keep a restored voice if it still exists;
+  // otherwise fall back to the backend's default.
   useEffect(() => {
     fetch(`${BACKEND_URL}/voices`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
       .then((data: { voices: Voice[]; default: string }) => {
         setVoices(data.voices);
-        setVoice(data.default);
+        setVoice((prev) => (prev && data.voices.some((v) => v.id === prev) ? prev : data.default));
       })
       .catch(() => {
         /* leave the picker empty; renders just use the backend default */
@@ -369,7 +414,7 @@ export default function Home() {
             {/* The writer's room: chat with the brain to develop the material. */}
             <div className="order-last lg:order-first lg:sticky lg:top-8">
               <Panel title="Writer's room" meta="chat · drafts">
-                <div className="flex max-h-[55dvh] min-h-[160px] flex-col gap-3 overflow-y-auto pr-1">
+                <div ref={threadRef} className="flex max-h-[55dvh] min-h-[160px] flex-col gap-3 overflow-y-auto pr-1">
                   {chatLog.length === 0 && (
                     <p className="text-sm leading-relaxed text-ink-3">
                       Describe a scene — <span className="font-mono">“two rival chefs, one kitchen”</span> —
@@ -449,6 +494,9 @@ export default function Home() {
                   aria-label="Direction"
                   value={direction}
                   onChange={(e) => setDirection(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleDirect();
+                  }}
                   placeholder="build from calm to furious"
                   className={FIELD}
                 />

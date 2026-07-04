@@ -125,7 +125,8 @@ def test_interpret_script_passes_whole_script_and_index_each_call():
     a = FakeBrain("groq")
     lines = ["A", "B"]
     BrainEngine([a]).interpret_script(lines, "warm")
-    assert a.seen == [(lines, 0), (lines, 1)]
+    # Lines are interpreted concurrently, so compare regardless of call order.
+    assert sorted(a.seen, key=lambda s: s[1]) == [(lines, 0), (lines, 1)]
 
 
 def test_interpret_script_falls_back_per_line():

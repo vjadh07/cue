@@ -11,6 +11,7 @@ never produce out-of-range values.
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
@@ -287,11 +288,18 @@ class BrainEngine:
         """Restyle a whole script under one direction. Each line is interpreted
         with the full script passed in as context, so the brain can read the arc
         (a line's place in the script) — not just the line alone. Fallback still
-        happens per line, so one slow/failing line can't sink the rest."""
-        return [
-            self.interpret(line, direction, script=lines, index=i)
-            for i, line in enumerate(lines)
-        ]
+        happens per line, so one slow/failing line can't sink the rest.
+
+        Lines are independent, so they're interpreted concurrently — a few
+        workers, not one per line, to stay under Groq's free-tier rate limit.
+        map() preserves input order regardless of completion order."""
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            return list(
+                pool.map(
+                    lambda pair: self.interpret(pair[1], direction, script=lines, index=pair[0]),
+                    enumerate(lines),
+                )
+            )
 
     def chat(self, messages: list[dict]) -> dict:
         """One writer's-room turn. Only LLM brains can write (the keyword
