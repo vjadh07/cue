@@ -36,16 +36,42 @@ def clean(raw: dict) -> dict:
 
 # ElevenLabs v3 audio tags the brain is allowed to use. A whitelist matters: it
 # stops the model from emitting arbitrary text that v3 would otherwise read out
-# loud as if it were part of the line.
+# loud as if it were part of the line. Deliberately wide — the tags ARE the
+# emotional range — but every entry is a known v3 delivery/emotion cue.
 TAG_WHITELIST = {
-    "whispers", "whispering", "shouting", "excited", "happy", "sad", "angry",
-    "sarcastic", "sighs", "laughs", "nervous", "cheerful", "crying", "tired",
-    "gently", "dramatic", "calm", "fearful", "curious", "hopeful", "serious",
-    "warmly", "coldly", "menacing", "playful", "breathless", "urgent",
-    "deadpan", "soft", "sorrowful",
+    # laughter
+    "laughs", "laughs harder", "giggles", "chuckles", "snorts",
+    # breath
+    "sighs", "exhales", "inhales", "gasps", "breathless",
+    # quiet
+    "whispers", "whispering", "under breath", "muttering", "soft",
+    # loud
+    "shouting", "yelling", "screaming",
+    # breaking
+    "crying", "sobbing", "voice breaking", "choked up", "trembling",
+    # timing
+    "pause", "long pause", "rushed", "drawn out", "slowly", "hesitant",
+    # dry
+    "sarcastic", "deadpan", "dry", "mocking", "smug",
+    # wonder
+    "awe", "amazed", "surprised", "shocked", "curious",
+    # heat
+    "angry", "furious", "frustrated", "annoyed", "irritated",
+    # fear
+    "nervous", "anxious", "fearful", "terrified", "panicked",
+    # light
+    "cheerful", "excited", "elated", "happy", "delighted", "playful",
+    "teasing", "hopeful", "proud", "relieved", "confident",
+    # heavy
+    "tired", "weary", "exhausted", "bored", "sad", "sorrowful", "somber",
+    "disappointed", "dejected", "embarrassed",
+    # tone
+    "serious", "grave", "stern", "warm", "warmly", "gently", "soothing",
+    "tender", "calm", "cold", "coldly", "menacing", "threatening", "sinister",
+    "dramatic", "urgent", "pleading", "desperate",
 }
 
-MAX_TAGS = 3
+MAX_TAGS = 4
 
 
 def clean_tags(raw, max_tags: int = MAX_TAGS) -> list[str]:

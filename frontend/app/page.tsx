@@ -22,6 +22,9 @@ type DirectedLine = {
   settings: Settings;
   tags: string[];
   notes: string;
+  // The performed rewrite: the same words with inline [tags] and expressive
+  // punctuation, or null when the brain didn't produce a valid one.
+  delivery: string | null;
   brain: string;
 };
 
@@ -97,6 +100,23 @@ function MatClouds() {
         {MAT_CLOUD}
       </pre>
     </div>
+  );
+}
+
+// Render a delivery string with its inline [tags] highlighted like cue marks.
+function Performance({ delivery }: { delivery: string }) {
+  return (
+    <>
+      {delivery.split(/(\[[^\]]+\])/).map((part, i) =>
+        part.startsWith("[") ? (
+          <span key={i} className="font-mono text-[0.8em] text-cue">
+            {part}
+          </span>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
   );
 }
 
@@ -329,7 +349,13 @@ export default function Home() {
       const response = await fetch(`${BACKEND_URL}/render`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: line.text, settings: line.settings, tags: line.tags, voice: lineVoice }),
+        body: JSON.stringify({
+          text: line.text,
+          settings: line.settings,
+          tags: line.tags,
+          voice: lineVoice,
+          delivery: line.delivery ?? "",
+        }),
       });
       if (!response.ok) throw new Error(`Render failed (${response.status})`);
       const data = { audio_id: "", ext: "", ...(await response.json()) };
@@ -364,6 +390,7 @@ export default function Home() {
             settings: line.settings,
             tags: line.tags,
             voice: voiceFor(line),
+            delivery: line.delivery ?? "",
           })),
         }),
       });
@@ -656,7 +683,9 @@ export default function Home() {
 
                       <div className="flex items-start justify-between gap-4 p-3">
                         <div className="min-w-0 flex-col gap-2">
-                          <p className="text-[15px] leading-relaxed text-ink">{line.text}</p>
+                          <p className="text-[15px] leading-relaxed text-ink">
+                            {line.delivery ? <Performance delivery={line.delivery} /> : line.text}
+                          </p>
                           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                             {line.tags.map((tag) => (
                               <span

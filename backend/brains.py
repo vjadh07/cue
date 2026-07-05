@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
+from delivery import verify_delivery
 from direction import interpret as keyword_interpret
 from script import clean_generated
 from settings import clean, clean_tags, TAG_WHITELIST
@@ -26,30 +27,37 @@ SYSTEM_PROMPT = (
     "line and a plain-English performance direction, output ONLY a JSON object "
     "describing how to perform the line.\n\n"
     "Keys:\n"
-    "- tags (array of 0-3 strings): audio tags that make the voice ACT out the "
-    "tone. THIS is what carries the emotion. Choose ONLY from: "
+    "- delivery (string): THE MOST IMPORTANT KEY. The line rewritten as a "
+    "performance: the user's words EXACTLY — never add, remove, or change a "
+    "word — but with inline audio tags in [brackets] placed at the exact beat "
+    "where the emotion lives (not just at the start), plus expressive "
+    "punctuation: … for hesitation, — for a break, CAPS for a hit word. "
+    "1-3 tags, placed where they belong.\n"
+    "- tags (array of 0-4 strings): the tags you used in the delivery.\n"
+    "Allowed tags (both keys), ONLY from: "
     + ", ".join(sorted(TAG_WHITELIST))
-    + ". Pick the ones that best capture the feeling; use [] if none fit.\n"
-    "- stability (0.0-1.0): HIGH = steady, even, controlled. LOW = variable, intense.\n"
+    + ".\n"
+    "- stability (0.0-1.0): LOW (0.0-0.3) = raw, intense, emotional — use it "
+    "for strong feelings. HIGH (0.6-0.9) = steady, even, controlled.\n"
     "- style (0.0-1.0): LOW = plain, natural. HIGH = theatrical, stylized.\n"
     "- speed (0.7-1.2): 1.0 = normal, lower = slower, higher = faster.\n"
     "- volume (0.1-1.0): 1.0 = normal, lower for soft/whisper/intimate.\n"
     "- notes (string): a short phrase (max 6 words) describing your reading.\n\n"
-    "The tags carry the emotion; the numbers carry energy and pace. "
+    "The delivery carries the emotion; the numbers carry energy and pace. "
     "Output only the JSON object, no prose."
 )
 
-# Two examples to anchor the format, the tags, and the interpretation.
+# Two examples to anchor the format, the inline delivery, and the interpretation.
 FEW_SHOT = [
     {"role": "user", "content": 'Line: "Run."\nDirection: frantic and terrified'},
     {
         "role": "assistant",
-        "content": '{"tags": ["shouting", "fearful"], "stability": 0.2, "style": 0.8, "speed": 1.2, "volume": 1.0, "notes": "panicked, urgent"}',
+        "content": '{"delivery": "[terrified] RUN!", "tags": ["terrified", "shouting"], "stability": 0.15, "style": 0.8, "speed": 1.2, "volume": 1.0, "notes": "panicked, urgent"}',
     },
     {"role": "user", "content": 'Line: "It is what it is."\nDirection: tired and resigned, flat'},
     {
         "role": "assistant",
-        "content": '{"tags": ["tired", "sighs"], "stability": 0.85, "style": 0.2, "speed": 0.9, "volume": 0.85, "notes": "flat, weary"}',
+        "content": '{"delivery": "[sighs] It is… what it is.", "tags": ["sighs", "tired"], "stability": 0.8, "style": 0.2, "speed": 0.9, "volume": 0.85, "notes": "flat, weary"}',
     },
 ]
 
@@ -119,16 +127,20 @@ def _build_messages(
     ]
 
 
-def _parse_director_json(content: str) -> dict:
-    """Turn an LLM's JSON reply into a safe {settings, tags, notes} dict. The
-    reply format is the same regardless of which model produced it, so every LLM
-    brain parses through here. Everything goes through the cleaners, so a bad
-    answer can't yield out-of-range settings or off-whitelist tags."""
+def _parse_director_json(content: str, line: str | None = None) -> dict:
+    """Turn an LLM's JSON reply into a safe {settings, tags, notes, delivery}
+    dict. The reply format is the same regardless of which model produced it, so
+    every LLM brain parses through here. Everything goes through the cleaners —
+    and the delivery through verify_delivery against the original line — so a
+    bad answer can't yield out-of-range settings, off-whitelist tags, or a
+    delivery that changes the user's words."""
     data = json.loads(content)
+    raw_delivery = str(data.get("delivery") or "")
     return {
         "settings": clean(data),
         "tags": clean_tags(data.get("tags")),
         "notes": str(data.get("notes", ""))[:80],
+        "delivery": verify_delivery(line, raw_delivery) if line else None,
     }
 
 
@@ -146,7 +158,7 @@ class OllamaBrain:
     ) -> dict:
         # No direction = neutral read; don't spend an LLM call on it.
         if not direction.strip():
-            return {"settings": clean({}), "tags": [], "notes": ""}
+            return {"settings": clean({}), "tags": [], "notes": "", "delivery": None}
 
         response = httpx.post(
             f"{self.url}/api/chat",
@@ -159,7 +171,7 @@ class OllamaBrain:
             timeout=60.0,
         )
         response.raise_for_status()
-        return _parse_director_json(response.json()["message"]["content"])
+        return _parse_director_json(response.json()["message"]["content"], line)
 
     def chat(self, messages: list[dict]) -> dict:
         """One writer's-room turn: full chat history in, {message, script} out."""
@@ -200,7 +212,7 @@ class GroqBrain:
     ) -> dict:
         # No direction = neutral read; don't spend an API call (or need a key).
         if not direction.strip():
-            return {"settings": clean({}), "tags": [], "notes": ""}
+            return {"settings": clean({}), "tags": [], "notes": "", "delivery": None}
 
         # No key -> raise so BrainEngine moves on to the local Ollama brain.
         if not self.api_key:
@@ -218,7 +230,7 @@ class GroqBrain:
             timeout=30.0,
         )
         response.raise_for_status()
-        return _parse_director_json(response.json()["choices"][0]["message"]["content"])
+        return _parse_director_json(response.json()["choices"][0]["message"]["content"], line)
 
     def chat(self, messages: list[dict]) -> dict:
         """One writer's-room turn: full chat history in, {message, script} out."""
@@ -261,7 +273,7 @@ class KeywordBrain:
         matched = result["matched"]
         notes = "matched: " + ", ".join(matched) if matched else ""
         # The keyword brain can't produce audio tags — it only knows speed/volume.
-        return {"settings": cleaned, "tags": [], "notes": notes}
+        return {"settings": cleaned, "tags": [], "notes": notes, "delivery": None}
 
 
 class BrainEngine:
@@ -282,7 +294,7 @@ class BrainEngine:
                 continue  # this brain is down — try the next
             return {**result, "brain": brain.name}
 
-        return {"settings": clean({}), "tags": [], "notes": "", "brain": "none"}
+        return {"settings": clean({}), "tags": [], "notes": "", "delivery": None, "brain": "none"}
 
     def interpret_script(self, lines: list[str], direction: str) -> list[dict]:
         """Restyle a whole script under one direction. Each line is interpreted

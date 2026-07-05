@@ -66,8 +66,11 @@ def test_clean_tags_dedupes():
     assert clean_tags(["sighs", "sighs"]) == ["sighs"]
 
 
-def test_clean_tags_caps_at_three():
-    assert clean_tags(["excited", "sad", "angry", "happy"]) == ["excited", "sad", "angry"]
+def test_clean_tags_caps_at_max():
+    from settings import MAX_TAGS
+
+    tags = ["excited", "sad", "angry", "happy", "tired", "calm"]
+    assert clean_tags(tags) == tags[:MAX_TAGS]
 
 
 def test_clean_tags_ignores_non_strings():

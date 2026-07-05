@@ -21,10 +21,12 @@ class Engine:
         self.providers = providers
         self.cache = cache
 
-    def render(self, text: str, settings: dict, tags: list, voice: str = "") -> dict:
+    def render(
+        self, text: str, settings: dict, tags: list, voice: str = "", delivery: str = ""
+    ) -> dict:
         # 1. If any provider already has this exact render cached, reuse it.
         for provider in self.providers:
-            key = self.cache.key(provider.name, settings, text, tags, voice)
+            key = self.cache.key(provider.name, settings, text, tags, voice, delivery)
             if self.cache.has(key, provider.ext):
                 return {
                     "audio_id": key,
@@ -38,14 +40,14 @@ class Engine:
             audio = None
             for attempt in range(2):
                 try:
-                    audio = provider.synthesize(text, settings, tags, voice)
+                    audio = provider.synthesize(text, settings, tags, voice, delivery)
                     break
                 except Exception:
                     if attempt == 0:
                         time.sleep(RETRY_DELAY_SECONDS)  # let a blip pass, retry once
             if audio is None:
                 continue  # truly down/out of quota — try the next provider
-            key = self.cache.key(provider.name, settings, text, tags, voice)
+            key = self.cache.key(provider.name, settings, text, tags, voice, delivery)
             self.cache.write(key, provider.ext, audio)
             return {
                 "audio_id": key,

@@ -19,9 +19,10 @@ class FakeProvider:
         self.calls = 0
         self.last_voice = None
 
-    def synthesize(self, text, settings, tags, voice=""):
+    def synthesize(self, text, settings, tags, voice="", delivery=""):
         self.calls += 1
         self.last_voice = voice
+        self.last_delivery = delivery
         if self.fail or self.calls <= self.fail_times:
             raise RuntimeError(f"{self.name} failed")
         return f"{self.name}-audio".encode()
@@ -104,6 +105,20 @@ def test_raises_when_all_providers_fail(tmp_path):
         assert False, "expected an error when every provider fails"
     except RuntimeError:
         pass
+
+
+def test_render_passes_delivery_and_keys_on_it(tmp_path):
+    cache = AudioCache(tmp_path)
+    el = FakeProvider("elevenlabs", "mp3")
+    engine = Engine([el], cache)
+
+    plain = engine.render("hello", S, TAGS)
+    performed = Engine([FakeProvider("elevenlabs", "mp3")], cache).render(
+        "hello", S, TAGS, delivery="[sighs] hello…"
+    )
+
+    assert el.last_delivery == ""
+    assert plain["audio_id"] != performed["audio_id"]  # different performances
 
 
 def test_render_passes_voice_to_provider(tmp_path):

@@ -22,6 +22,7 @@ load_dotenv(Path(__file__).parent / ".env")
 
 from brains import BrainEngine, GroqBrain, KeywordBrain, OllamaBrain
 from cache import AudioCache
+from delivery import verify_delivery
 from engine import Engine
 from providers import DEFAULT_VOICE_ID, ElevenLabsProvider, PiperProvider
 from script import parse_script, speakers
@@ -65,12 +66,14 @@ class DirectRequest(BaseModel):
 
 
 class RenderRequest(BaseModel):
-    # A single line plus the settings/tags it already got from /direct. The
-    # client supplies these, so they're re-cleaned before they reach the voice.
+    # A single line plus the settings/tags/delivery it already got from /direct.
+    # The client supplies these, so they're re-cleaned (and the delivery
+    # re-verified word-for-word) before they reach the voice.
     text: str
     settings: dict = {}
     tags: list[str] = []
     voice: str = ""  # an ElevenLabs voice_id; empty = the default voice
+    delivery: str = ""  # the performed rewrite; must speak exactly `text`'s words
 
 
 class ReadRequest(BaseModel):
@@ -146,6 +149,7 @@ def direct(request: DirectRequest):
                 "settings": result["settings"],
                 "tags": result["tags"],
                 "notes": result["notes"],
+                "delivery": result["delivery"],
                 "brain": result["brain"],
             }
             for line, result in zip(parsed, interpretations)
@@ -163,10 +167,12 @@ def render(request: RenderRequest):
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
 
-    # The settings/tags came from the client, so re-clean them before the voice.
+    # The settings/tags/delivery came from the client, so re-clean them before
+    # the voice — a tampered delivery must never be spoken.
     settings = clean(request.settings)
     tags = clean_tags(request.tags)
-    return voice_engine.render(text, settings, tags, request.voice)
+    delivery = verify_delivery(text, request.delivery) or ""
+    return voice_engine.render(text, settings, tags, request.voice, delivery)
 
 
 @app.post("/chat")
@@ -205,7 +211,8 @@ def read(request: ReadRequest):
         if not text:
             continue
         settings = clean(line.settings)
-        rendered = voice_engine.render(text, settings, clean_tags(line.tags), line.voice)
+        delivery = verify_delivery(text, line.delivery) or ""
+        rendered = voice_engine.render(text, settings, clean_tags(line.tags), line.voice, delivery)
         clips.append(rendered)
         # Clips are rendered volume-free (volume is a playback concern), so the
         # line's volume is baked into the stitched track as gain instead.

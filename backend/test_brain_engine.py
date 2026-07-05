@@ -38,6 +38,24 @@ def test_parse_director_json_truncates_long_notes():
     assert len(result["notes"]) == 80
 
 
+def test_parse_director_json_keeps_a_valid_delivery():
+    content = '{"delivery": "We did it [sighs]… we ACTUALLY did it.", "tags": ["sighs"]}'
+    result = _parse_director_json(content, line="We did it. We actually did it.")
+    assert result["delivery"] == "We did it [sighs]… we ACTUALLY did it."
+
+
+def test_parse_director_json_rejects_a_cheating_delivery():
+    # The model changed the words — the delivery must be dropped, not spoken.
+    content = '{"delivery": "We totally did it!", "tags": []}'
+    result = _parse_director_json(content, line="We did it.")
+    assert result["delivery"] is None
+
+
+def test_parse_director_json_without_line_has_no_delivery():
+    result = _parse_director_json('{"delivery": "Hi.", "tags": []}')
+    assert result["delivery"] is None
+
+
 class FakeBrain:
     def __init__(self, name, fail=False):
         self.name = name

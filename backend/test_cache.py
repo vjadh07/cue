@@ -39,6 +39,13 @@ def test_voice_changes_the_key(tmp_path):
     )
 
 
+def test_delivery_changes_the_key(tmp_path):
+    # The delivery is the text actually performed, so it's a different render.
+    cache = AudioCache(tmp_path)
+    base = cache.key("elevenlabs", S, "hello", NO_TAGS)
+    assert cache.key("elevenlabs", S, "hello", NO_TAGS, delivery="[sighs] hello…") != base
+
+
 def test_volume_does_not_affect_the_key(tmp_path):
     # Volume is applied at playback, so it must not change the cached render.
     cache = AudioCache(tmp_path)
