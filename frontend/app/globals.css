@@ -77,11 +77,17 @@
   --font-mono: var(--font-geist-mono);
 }
 
-/* The lobby surface: the mat's grid printed on light paper. Applied to the
-   landing page's own wrapper so the studio's dark body styles stay global. */
+/* The lobby surface: paper color on the wrapper; the grid itself lives on a
+   fixed .lobby-grid layer so the aurora can drift UNDER it and the canvas
+   glow can light it up from above. */
 .lobby {
   color: var(--ink-deep);
   background-color: var(--paper);
+}
+
+/* The mat's grid printed on light paper — fixed, like the studio's mat, so
+   content slides over it and the cursor glow always lines up with it. */
+.lobby-grid {
   background-image:
     linear-gradient(var(--paper-line-strong) 1px, transparent 1px),
     linear-gradient(90deg, var(--paper-line-strong) 1px, transparent 1px),
@@ -94,14 +100,143 @@
     36px 36px;
 }
 
-/* Landing equalizer ribbon: bars ease back down after the cursor passes. */
-.lobby-eq-bar {
-  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+/* Aurora: three soft washes of the brand's own hues (mat green, cue amber, a
+   cool teal) drifting on 30s-scale loops. Gradient falloff instead of filter
+   blur, transform-only animation — cheap on the GPU. */
+.lobby-aurora span {
+  position: absolute;
+  border-radius: 50%;
   will-change: transform;
 }
+.lobby-aurora .aurora-a {
+  top: -22%;
+  left: -12%;
+  width: 72vmax;
+  height: 72vmax;
+  background: radial-gradient(closest-side, oklch(0.9 0.075 165 / 0.55), transparent 70%);
+  animation: aurora-a 26s ease-in-out infinite alternate;
+}
+.lobby-aurora .aurora-b {
+  top: 4%;
+  right: -18%;
+  width: 62vmax;
+  height: 62vmax;
+  background: radial-gradient(closest-side, oklch(0.93 0.07 90 / 0.5), transparent 70%);
+  animation: aurora-b 34s ease-in-out infinite alternate;
+}
+.lobby-aurora .aurora-c {
+  bottom: -28%;
+  left: 14%;
+  width: 66vmax;
+  height: 66vmax;
+  background: radial-gradient(closest-side, oklch(0.91 0.05 210 / 0.4), transparent 70%);
+  animation: aurora-c 40s ease-in-out infinite alternate;
+}
+@keyframes aurora-a {
+  to {
+    transform: translate3d(9vw, 7vh, 0) scale(1.18);
+  }
+}
+@keyframes aurora-b {
+  to {
+    transform: translate3d(-8vw, 10vh, 0) scale(0.92);
+  }
+}
+@keyframes aurora-c {
+  to {
+    transform: translate3d(10vw, -8vh, 0) scale(1.12);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .lobby-eq-bar {
-    transition: none;
+  .lobby-aurora span {
+    animation: none;
+  }
+}
+
+/* Hero entrance: words blur-rise in. SSR paints everything visible; mounted
+   JS snaps to .pre (transition: none, so no reverse animation), then releases.
+   transition-delay staggers the release per word. */
+.lobby-rise {
+  display: inline-block;
+  transition:
+    opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.lobby-rise.pre {
+  transition: none;
+  opacity: 0;
+  transform: translateY(18px);
+  filter: blur(10px);
+}
+
+/* Scroll reveals: same blur-rise, triggered by IntersectionObserver. The .pre
+   class is only ever added by JS to elements still below the fold. */
+.lobby-reveal {
+  transition:
+    opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.lobby-reveal.pre {
+  transition: none;
+  opacity: 0;
+  transform: translateY(26px);
+  filter: blur(6px);
+}
+
+/* Spotlight cards: a warm pool of light tracks the cursor inside the card. */
+.lobby-spot-card {
+  position: relative;
+  overflow: hidden;
+}
+.lobby-spot-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.35s ease-out;
+  background: radial-gradient(
+    260px circle at var(--sx, 50%) var(--sy, 50%),
+    oklch(0.86 0.155 84 / 0.18),
+    transparent 70%
+  );
+  pointer-events: none;
+}
+.lobby-spot-card:hover::before {
+  opacity: 1;
+}
+.lobby-spot-card > * {
+  position: relative;
+}
+
+/* The direction demo: each segment of the performed line stamps in — tags pop,
+   words rise. Base opacity is 1 and fill-mode is backwards, so if animations
+   never run the line is simply visible. */
+@keyframes take-tag-in {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+}
+@keyframes take-word-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.take-tag {
+  display: inline-block;
+  animation: take-tag-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.take-word {
+  display: inline-block;
+  animation: take-word-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .take-tag,
+  .take-word {
+    animation: none;
   }
 }
 
