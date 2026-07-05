@@ -77,27 +77,11 @@
   --font-mono: var(--font-geist-mono);
 }
 
-/* The lobby surface: paper color on the wrapper; the grid itself lives on a
-   fixed .lobby-grid layer so the aurora can drift UNDER it and the canvas
-   glow can light it up from above. */
+/* The lobby surface: no grid out here — the mat belongs to the studio. The
+   lobby is the air outside it: paper, aurora, and drifting sound-waves. */
 .lobby {
   color: var(--ink-deep);
   background-color: var(--paper);
-}
-
-/* The mat's grid printed on light paper — fixed, like the studio's mat, so
-   content slides over it and the cursor glow always lines up with it. */
-.lobby-grid {
-  background-image:
-    linear-gradient(var(--paper-line-strong) 1px, transparent 1px),
-    linear-gradient(90deg, var(--paper-line-strong) 1px, transparent 1px),
-    linear-gradient(var(--paper-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--paper-line) 1px, transparent 1px);
-  background-size:
-    180px 180px,
-    180px 180px,
-    36px 36px,
-    36px 36px;
 }
 
 /* Aurora: three soft washes of the brand's own hues (mat green, cue amber, a
@@ -153,11 +137,11 @@
   }
 }
 
-/* Hero entrance: words blur-rise in. SSR paints everything visible; mounted
+/* Hero entrance: blocks blur-rise in. SSR paints everything visible; mounted
    JS snaps to .pre (transition: none, so no reverse animation), then releases.
-   transition-delay staggers the release per word. */
+   transition-delay staggers the release. No display here — this class goes on
+   blocks and flex containers alike and must never change their layout. */
 .lobby-rise {
-  display: inline-block;
   transition:
     opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
     transform 0.8s cubic-bezier(0.16, 1, 0.3, 1),
@@ -168,6 +152,22 @@
   opacity: 0;
   transform: translateY(18px);
   filter: blur(10px);
+}
+
+/* Per-letter entrance for the headline (reactbits SplitText): each glyph
+   rises out of a blur on its own beat, then hands over to the proximity
+   weight effect. */
+.lobby-rise-letter {
+  transition:
+    opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.lobby-rise-letter.pre {
+  transition: none;
+  opacity: 0;
+  transform: translateY(0.5em);
+  filter: blur(8px);
 }
 
 /* Scroll reveals: same blur-rise, triggered by IntersectionObserver. The .pre

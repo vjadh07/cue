@@ -11,12 +11,12 @@ import { MAT_CLOUD } from "./mat-art";
 import {
   Aurora,
   EqRibbon,
-  GridGlow,
   ProximityText,
   Reveal,
   SpotlightCard,
   TagCycler,
   useEntranceStage,
+  WaveField,
 } from "./lobby-fx";
 
 // The words the headline chip cycles through — all real v3 audio tags.
@@ -177,10 +177,9 @@ export default function Lobby() {
 
   return (
     <main className="lobby relative min-h-[100dvh] overflow-hidden">
-      {/* The living backdrop: aurora under the grid, cursor glow over it. */}
+      {/* The living backdrop: aurora wash under drifting sound-waves. */}
       <Aurora />
-      <div aria-hidden="true" className="lobby-grid pointer-events-none fixed inset-0" />
-      <GridGlow />
+      <WaveField />
 
       {/* The dither clouds, printed faintly on the paper. */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 hidden select-none md:block">
@@ -210,14 +209,10 @@ export default function Lobby() {
         {/* Hero */}
         <section className="flex flex-1 flex-col items-center justify-center pb-10 pt-14 text-center">
           <h1 className="max-w-3xl text-balance text-5xl font-semibold leading-[1.06] tracking-[-0.02em] sm:text-6xl md:text-7xl">
-            <span {...rise(0)}>
-              <ProximityText text="You direct." />
-            </span>
+            <ProximityText text="You direct." stage={stage} baseDelay={0} />
             <br />
-            <span {...rise(1)}>
-              <ProximityText text="The voice" />
-            </span>{" "}
-            <span {...rise(2)}>
+            <ProximityText text="The voice" stage={stage} baseDelay={280} />{" "}
+            <span {...rise(6)} className={`${rise(6).className} inline-block`}>
               <CueWord>
                 <TagCycler words={CHIP_WORDS} />
               </CueWord>
@@ -226,8 +221,8 @@ export default function Lobby() {
           </h1>
 
           <p
-            {...rise(4)}
-            className={`${rise(4).className} mt-7 max-w-[52ch] text-balance text-base leading-relaxed text-ink-deep-2 sm:text-lg`}
+            {...rise(8)}
+            className={`${rise(8).className} mt-7 max-w-[52ch] text-balance text-base leading-relaxed text-ink-deep-2 sm:text-lg`}
           >
             Cue turns plain-English direction into real performances — voices that
             whisper, break, and shout on your note, stitched with music into one
@@ -235,8 +230,8 @@ export default function Lobby() {
           </p>
 
           <div
-            {...rise(6)}
-            className={`${rise(6).className} mt-9 flex flex-wrap items-center justify-center gap-4`}
+            {...rise(10)}
+            className={`${rise(10).className} mt-9 flex flex-wrap items-center justify-center gap-4`}
           >
             <Link
               href="/studio"
@@ -253,7 +248,7 @@ export default function Lobby() {
           </div>
 
           {/* The interactive level meter — sweep your cursor across it. */}
-          <div {...rise(8)} className={`${rise(8).className} mt-16 w-full`}>
+          <div {...rise(12)} className={`${rise(12).className} mt-16 w-full`}>
             <EqRibbon />
           </div>
         </section>

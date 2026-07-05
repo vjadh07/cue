@@ -28,30 +28,31 @@ export function Aurora() {
 }
 
 /* ------------------------------------------------------------------ */
-/* GridGlow — the mat grid lights up amber around the cursor. A fixed   */
-/* canvas draws only the lines inside the glow radius, masked by a      */
-/* radial gradient, over the CSS grid (which stays as the no-JS base).  */
+/* WaveField — the lobby's background: horizontal sound-waves drifting  */
+/* across the page (reactbits' Waves, redrawn as audio). Lines undulate */
+/* slowly on their own and bend toward the cursor, with a warm pool of  */
+/* light where you point. Reduced motion gets one static drawing.       */
 /* ------------------------------------------------------------------ */
 
-const GRID_FINE = 36; // must match .lobby-grid background-size
-const GRID_BOLD = 180;
-const GLOW_RADIUS = 230;
+const WAVE_LINES = 18;
+const WAVE_STEP = 12; // px between sample points along each line
 
-export function GridGlow() {
+export function WaveField() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || prefersReducedMotion()) return;
+    if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    const reduce = prefersReducedMotion();
     let raf = 0;
     let w = 0;
     let h = 0;
     const target = { x: -9999, y: -9999 };
     const pos = { x: -9999, y: -9999 };
-    let energy = 0; // eases the whole glow in/out so it never pops
+    let energy = 0;
     let active = false;
 
     function resize() {
@@ -65,11 +66,62 @@ export function GridGlow() {
     }
     resize();
 
+    function drawFrame(t: number) {
+      if (!ctx) return;
+      ctx.clearRect(0, 0, w, h);
+
+      // A soft warm pool of light where the cursor rests.
+      if (energy > 0.01) {
+        ctx.globalAlpha = energy;
+        const halo = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, 320);
+        halo.addColorStop(0, "rgba(242, 191, 76, 0.13)");
+        halo.addColorStop(1, "rgba(242, 191, 76, 0)");
+        ctx.fillStyle = halo;
+        ctx.fillRect(pos.x - 320, pos.y - 320, 640, 640);
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(42, 56, 51, 0.10)";
+      for (let i = 0; i < WAVE_LINES; i += 1) {
+        const baseY = ((i + 0.5) / WAVE_LINES) * h;
+        ctx.beginPath();
+        for (let x = 0; x <= w + WAVE_STEP; x += WAVE_STEP) {
+          // Two slow sines per line, out of phase line-to-line, so the field
+          // rolls like a quiet room tone rather than a synchronized ripple.
+          let y =
+            baseY +
+            8 * Math.sin(x * 0.006 + t * 0.00058 + i * 0.72) +
+            12 * Math.sin(x * 0.0021 - t * 0.00041 + i * 1.31);
+          if (energy > 0.01) {
+            // Lines lean gently toward the cursor, amplitude swelling nearby.
+            const dx = x - pos.x;
+            const dy = baseY - pos.y;
+            const gauss = Math.exp(-(dx * dx + dy * dy) / 52000) * energy;
+            y += (pos.y - y) * 0.32 * gauss;
+            y += 6 * gauss * Math.sin(x * 0.05 + t * 0.004);
+          }
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+    }
+
+    if (reduce) {
+      // One still drawing — the texture without the motion.
+      drawFrame(0);
+      window.addEventListener("resize", () => {
+        resize();
+        drawFrame(0);
+      });
+      return;
+    }
+
     function onMove(e: PointerEvent) {
       target.x = e.clientX;
       target.y = e.clientY;
       if (!active) {
-        // First contact: appear where the cursor is, not a slide from offscreen.
         pos.x = e.clientX;
         pos.y = e.clientY;
         active = true;
@@ -79,65 +131,14 @@ export function GridGlow() {
       active = false;
     }
 
-    function draw() {
-      if (!ctx) return;
-      pos.x += (target.x - pos.x) * 0.14;
-      pos.y += (target.y - pos.y) * 0.14;
-      energy += ((active ? 1 : 0) - energy) * 0.08;
-      ctx.clearRect(0, 0, w, h);
-
-      if (energy > 0.01) {
-        ctx.globalAlpha = energy;
-
-        // A faint warm pool of light on the paper itself.
-        const halo = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, GLOW_RADIUS);
-        halo.addColorStop(0, "rgba(242, 191, 76, 0.10)");
-        halo.addColorStop(1, "rgba(242, 191, 76, 0)");
-        ctx.fillStyle = halo;
-        ctx.fillRect(pos.x - GLOW_RADIUS, pos.y - GLOW_RADIUS, GLOW_RADIUS * 2, GLOW_RADIUS * 2);
-
-        // The grid lines inside the radius, restroked in amber and masked by
-        // the same falloff, so the mat looks lit rather than repainted.
-        const mask = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, GLOW_RADIUS);
-        mask.addColorStop(0, "rgba(151, 103, 21, 0.55)");
-        mask.addColorStop(0.7, "rgba(151, 103, 21, 0.28)");
-        mask.addColorStop(1, "rgba(151, 103, 21, 0)");
-        ctx.strokeStyle = mask;
-
-        const x0 = Math.floor((pos.x - GLOW_RADIUS) / GRID_FINE) * GRID_FINE;
-        const y0 = Math.floor((pos.y - GLOW_RADIUS) / GRID_FINE) * GRID_FINE;
-        ctx.beginPath();
-        for (let x = x0; x <= pos.x + GLOW_RADIUS; x += GRID_FINE) {
-          ctx.moveTo(x + 0.5, pos.y - GLOW_RADIUS);
-          ctx.lineTo(x + 0.5, pos.y + GLOW_RADIUS);
-        }
-        for (let y = y0; y <= pos.y + GLOW_RADIUS; y += GRID_FINE) {
-          ctx.moveTo(pos.x - GLOW_RADIUS, y + 0.5);
-          ctx.lineTo(pos.x + GLOW_RADIUS, y + 0.5);
-        }
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        // The every-5th bold lines get a second, heavier pass.
-        const bx0 = Math.floor((pos.x - GLOW_RADIUS) / GRID_BOLD) * GRID_BOLD;
-        const by0 = Math.floor((pos.y - GLOW_RADIUS) / GRID_BOLD) * GRID_BOLD;
-        ctx.beginPath();
-        for (let x = bx0; x <= pos.x + GLOW_RADIUS; x += GRID_BOLD) {
-          ctx.moveTo(x + 0.5, pos.y - GLOW_RADIUS);
-          ctx.lineTo(x + 0.5, pos.y + GLOW_RADIUS);
-        }
-        for (let y = by0; y <= pos.y + GLOW_RADIUS; y += GRID_BOLD) {
-          ctx.moveTo(pos.x - GLOW_RADIUS, y + 0.5);
-          ctx.lineTo(pos.x + GLOW_RADIUS, y + 0.5);
-        }
-        ctx.lineWidth = 1.6;
-        ctx.stroke();
-
-        ctx.globalAlpha = 1;
-      }
-      raf = requestAnimationFrame(draw);
+    function loop(t: number) {
+      raf = requestAnimationFrame(loop);
+      pos.x += (target.x - pos.x) * 0.1;
+      pos.y += (target.y - pos.y) * 0.1;
+      energy += ((active ? 1 : 0) - energy) * 0.06;
+      drawFrame(t);
     }
-    raf = requestAnimationFrame(draw);
+    raf = requestAnimationFrame(loop);
 
     window.addEventListener("pointermove", onMove);
     document.documentElement.addEventListener("mouseleave", onLeave);
@@ -192,7 +193,20 @@ export function useEntranceStage(): "ssr" | "set" | "live" {
 /* loop forces at most one reflow per frame.                            */
 /* ------------------------------------------------------------------ */
 
-export function ProximityText({ text, className = "" }: { text: string; className?: string }) {
+export function ProximityText({
+  text,
+  className = "",
+  stage,
+  baseDelay = 0,
+  letterStagger = 26,
+}: {
+  text: string;
+  className?: string;
+  /** Entrance stage from useEntranceStage — letters blur-rise in one by one. */
+  stage?: "ssr" | "set" | "live";
+  baseDelay?: number;
+  letterStagger?: number;
+}) {
   const wrapRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -244,13 +258,19 @@ export function ProximityText({ text, className = "" }: { text: string; classNam
     };
   }, []);
 
+  const pre = stage === "set" ? " pre" : "";
   return (
     <span ref={wrapRef} className={className}>
       {Array.from(text).map((ch, i) =>
         ch === " " ? (
           " "
         ) : (
-          <span key={i} data-prox className="inline-block">
+          <span
+            key={i}
+            data-prox
+            className={`lobby-rise-letter inline-block${pre}`}
+            style={stage ? { transitionDelay: `${baseDelay + i * letterStagger}ms` } : undefined}
+          >
             {ch}
           </span>
         ),
