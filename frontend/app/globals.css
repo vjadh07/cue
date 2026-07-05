@@ -39,6 +39,15 @@
 
   --danger: oklch(0.76 0.16 25);
 
+  /* The lobby — the landing page is the daylight side of the mat world:
+     chalk-mint paper, dark ink, the same grid printed faintly. */
+  --paper: oklch(0.965 0.012 165);
+  --paper-line: oklch(0.45 0.06 165 / 0.09);
+  --paper-line-strong: oklch(0.45 0.06 165 / 0.16);
+  --ink-deep: oklch(0.26 0.03 170);
+  --ink-deep-2: oklch(0.45 0.03 168);
+  --cue-press: oklch(0.45 0.11 70); /* amber dark enough to read ON paper */
+
   --background: var(--mat);
   --foreground: var(--ink);
 }
@@ -60,8 +69,40 @@
   --color-cue-deep: var(--cue-deep);
   --color-cue-ink: var(--cue-ink);
   --color-danger: var(--danger);
+  --color-paper: var(--paper);
+  --color-ink-deep: var(--ink-deep);
+  --color-ink-deep-2: var(--ink-deep-2);
+  --color-cue-press: var(--cue-press);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+}
+
+/* The lobby surface: the mat's grid printed on light paper. Applied to the
+   landing page's own wrapper so the studio's dark body styles stay global. */
+.lobby {
+  color: var(--ink-deep);
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--paper-line-strong) 1px, transparent 1px),
+    linear-gradient(90deg, var(--paper-line-strong) 1px, transparent 1px),
+    linear-gradient(var(--paper-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--paper-line) 1px, transparent 1px);
+  background-size:
+    180px 180px,
+    180px 180px,
+    36px 36px,
+    36px 36px;
+}
+
+/* Landing equalizer ribbon: bars ease back down after the cursor passes. */
+.lobby-eq-bar {
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lobby-eq-bar {
+    transition: none;
+  }
 }
 
 body {
