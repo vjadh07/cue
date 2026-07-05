@@ -154,6 +154,10 @@ export default function Home() {
   // (narrator) lines use `voice`.
   const [cast, setCast] = useState<Record<string, string>>({});
 
+  // The music bed under the full read ("" = none), from GET /music.
+  const [musicTracks, setMusicTracks] = useState<{ id: string; name: string }[]>([]);
+  const [music, setMusic] = useState("");
+
   // Which line is mid-render (waiting on /render) and which is playing. Only one
   // line plays at a time — we reuse a single <audio> element. Index -1 means the
   // stitched full read (not an individual line).
@@ -190,6 +194,7 @@ export default function Home() {
         if (typeof data.script === "string") setScript(data.script);
         if (typeof data.direction === "string") setDirection(data.direction);
         if (typeof data.voice === "string") setVoice(data.voice);
+        if (typeof data.music === "string") setMusic(data.music);
         if (Array.isArray(data.chatLog)) setChatLog(data.chatLog);
         if (data.cast && typeof data.cast === "object") setCast(data.cast);
       }
@@ -206,14 +211,24 @@ export default function Home() {
       try {
         localStorage.setItem(
           "cue-workbench",
-          JSON.stringify({ script, direction, voice, chatLog, cast })
+          JSON.stringify({ script, direction, voice, music, chatLog, cast })
         );
       } catch {
         /* storage full or blocked — persistence is best-effort */
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [script, direction, voice, chatLog, cast]);
+  }, [script, direction, voice, music, chatLog, cast]);
+
+  // Load the music beds once.
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/music`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((data: { tracks: { id: string; name: string }[] }) => setMusicTracks(data.tracks))
+      .catch(() => {
+        /* no picker; reads just play without music */
+      });
+  }, []);
 
   // Load the available voices once. Keep a restored voice if it still exists;
   // otherwise fall back to the backend's default.
@@ -273,6 +288,7 @@ export default function Home() {
     setChatInput("");
     setLines([]);
     setCast({});
+    setMusic("");
     setReadTrack(null);
     setPlayingLine(null);
     setLoadingLine(null);
@@ -392,6 +408,7 @@ export default function Home() {
             voice: voiceFor(line),
             delivery: line.delivery ?? "",
           })),
+          music,
         }),
       });
       if (!response.ok) throw new Error(`Stitch failed (${response.status})`);
@@ -631,6 +648,24 @@ export default function Home() {
                   <button onClick={handleRead} disabled={stitching} className={BTN_PRIMARY}>
                     {stitching ? "Stitching…" : readPlaying ? "Playing…" : "▶ Play full read"}
                   </button>
+                  {musicTracks.length > 0 && (
+                    <select
+                      aria-label="Music bed"
+                      value={music}
+                      onChange={(e) => {
+                        setMusic(e.target.value);
+                        setReadTrack(null); // the stitched track no longer matches
+                      }}
+                      className="cursor-pointer rounded border border-edge bg-panel-2 px-3 py-2 font-mono text-xs text-ink-2 outline-none focus:border-cue-deep"
+                    >
+                      <option value="">no music</option>
+                      {musicTracks.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          ♫ {t.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   {readTrack && (
                     <a href={`${BACKEND_URL}/audio/${readTrack}.mp3?download=1`} className={BTN_QUIET}>
                       Download

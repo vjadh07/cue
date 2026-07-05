@@ -20,17 +20,21 @@ PAUSE_MS = 400
 
 
 def stitch_key(
-    clip_ids: list[str], pause_ms: int = PAUSE_MS, volumes: list[float] | None = None
+    clip_ids: list[str],
+    pause_ms: int = PAUSE_MS,
+    volumes: list[float] | None = None,
+    music: str = "",
 ) -> str:
     """A stable cache id for one stitched track. The track is fully determined
-    by which clips it joins, in what order, at what volumes, with what pause —
-    so that's the key. Same shape as the per-clip cache ids (64-char sha256 hex).
+    by which clips it joins, in what order, at what volumes, with what pause,
+    under which music bed — so that's the key. Same shape as the per-clip cache
+    ids (64-char sha256 hex).
 
     Per-line volume lives HERE and not in the clip cache: clips are rendered
     volume-free (volume is a playback concern), but a stitched track bakes the
     gain in, so it must key on it."""
     vol_str = ",".join(f"{v:.2f}" for v in volumes) if volumes else ""
-    raw = f"stitch|{pause_ms}|{vol_str}|" + ",".join(clip_ids)
+    raw = f"stitch|{pause_ms}|{vol_str}|{music}|" + ",".join(clip_ids)
     return hashlib.sha256(raw.encode()).hexdigest()
 
 

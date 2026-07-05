@@ -24,6 +24,7 @@ from brains import BrainEngine, GroqBrain, KeywordBrain, OllamaBrain
 from cache import AudioCache
 from delivery import verify_delivery
 from engine import Engine
+from music import MUSIC_DIR, list_music, underlay
 from providers import DEFAULT_VOICE_ID, ElevenLabsProvider, PiperProvider
 from script import parse_script, speakers
 from settings import clean, clean_tags
@@ -80,6 +81,9 @@ class ReadRequest(BaseModel):
     # The whole directed script, ready to perform: each line with the settings,
     # tags, and voice it should be rendered with. Order = playback order.
     lines: list[RenderRequest]
+    # A music bed id from GET /music (empty = no music). The bed plays alone
+    # for a short intro, ducks under the speech, and swells back for the outro.
+    music: str = ""
 
 
 class ChatMessage(BaseModel):
@@ -220,12 +224,25 @@ def read(request: ReadRequest):
     if not clips:
         raise HTTPException(status_code=400, detail="lines are required")
 
-    key = stitch_key([c["audio_id"] for c in clips], volumes=volumes)
+    # The music id must be one we actually offer — never a client-supplied path.
+    music = request.music if any(t["id"] == request.music for t in list_music()) else ""
+
+    key = stitch_key([c["audio_id"] for c in clips], volumes=volumes, music=music)
     if not cache.has(key, "mp3"):
         paths = [cache.path(c["audio_id"], c["ext"]) for c in clips]
-        cache.write(key, "mp3", stitch(paths, volumes=volumes))
+        track = stitch(paths, volumes=volumes)
+        if music:
+            track = underlay(track, MUSIC_DIR / music)
+        cache.write(key, "mp3", track)
         return {"audio_id": key, "ext": "mp3", "engine": "stitch", "cached": False}
     return {"audio_id": key, "ext": "mp3", "engine": "stitch", "cached": True}
+
+
+@app.get("/music")
+def music():
+    """The music beds on offer for the full read — whatever audio lives in
+    backend/music/ (two synthesized beds ship by default; drop in your own)."""
+    return {"tracks": list_music()}
 
 
 @app.get("/voices")

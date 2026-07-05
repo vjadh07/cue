@@ -87,6 +87,14 @@ def test_stitch_key_changes_with_volumes():
     )
 
 
+def test_stitch_key_changes_with_music():
+    base = stitch_key(["aaa"], 400)
+    assert stitch_key(["aaa"], 400, music="night-drone.mp3") != base
+    assert stitch_key(["aaa"], 400, music="warm-pad.mp3") != stitch_key(
+        ["aaa"], 400, music="night-drone.mp3"
+    )
+
+
 def test_stitch_key_is_deterministic_and_hex():
     key = stitch_key(["aaa", "bbb"], 400)
     assert key == stitch_key(["aaa", "bbb"], 400)
