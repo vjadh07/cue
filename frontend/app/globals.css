@@ -84,59 +84,6 @@
   background-color: var(--paper);
 }
 
-/* Aurora: three soft washes of the brand's own hues (mat green, cue amber, a
-   cool teal) drifting on 30s-scale loops. Gradient falloff instead of filter
-   blur, transform-only animation — cheap on the GPU. */
-.lobby-aurora span {
-  position: absolute;
-  border-radius: 50%;
-  will-change: transform;
-}
-.lobby-aurora .aurora-a {
-  top: -22%;
-  left: -12%;
-  width: 72vmax;
-  height: 72vmax;
-  background: radial-gradient(closest-side, oklch(0.9 0.075 165 / 0.55), transparent 70%);
-  animation: aurora-a 26s ease-in-out infinite alternate;
-}
-.lobby-aurora .aurora-b {
-  top: 4%;
-  right: -18%;
-  width: 62vmax;
-  height: 62vmax;
-  background: radial-gradient(closest-side, oklch(0.93 0.07 90 / 0.5), transparent 70%);
-  animation: aurora-b 34s ease-in-out infinite alternate;
-}
-.lobby-aurora .aurora-c {
-  bottom: -28%;
-  left: 14%;
-  width: 66vmax;
-  height: 66vmax;
-  background: radial-gradient(closest-side, oklch(0.91 0.05 210 / 0.4), transparent 70%);
-  animation: aurora-c 40s ease-in-out infinite alternate;
-}
-@keyframes aurora-a {
-  to {
-    transform: translate3d(9vw, 7vh, 0) scale(1.18);
-  }
-}
-@keyframes aurora-b {
-  to {
-    transform: translate3d(-8vw, 10vh, 0) scale(0.92);
-  }
-}
-@keyframes aurora-c {
-  to {
-    transform: translate3d(10vw, -8vh, 0) scale(1.12);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .lobby-aurora span {
-    animation: none;
-  }
-}
-
 /* Hero entrance: blocks blur-rise in. SSR paints everything visible; mounted
    JS snaps to .pre (transition: none, so no reverse animation), then releases.
    transition-delay staggers the release. No display here — this class goes on

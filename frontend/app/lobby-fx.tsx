@@ -13,31 +13,25 @@ function prefersReducedMotion() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Aurora — three soft color washes drifting under the grid, so the    */
-/* paper reads as daylight instead of a flat white sheet.              */
+/* AsciiField — the lobby's background: a full-viewport field of tiny   */
+/* mono characters rendering sound propagating through the room. Two    */
+/* off-stage "speakers" send slow ambient ripples across the paper; the */
+/* cursor is a live sound source (ripples radiate from it, in amber),   */
+/* and a click emits a one-shot pulse that travels outward. Character   */
+/* density follows the wave: blank → · : ~ + x % # with ♪ at the        */
+/* loudest crests. Glyphs are pre-baked to sprite tiles so each frame   */
+/* is pure drawImage. Reduced motion gets one still drawing.            */
 /* ------------------------------------------------------------------ */
 
-export function Aurora() {
-  return (
-    <div aria-hidden="true" className="lobby-aurora pointer-events-none fixed inset-0 overflow-hidden">
-      <span className="aurora-a" />
-      <span className="aurora-b" />
-      <span className="aurora-c" />
-    </div>
-  );
-}
+const RAMP = ["·", ":", "~", "+", "x", "%", "#"];
+const NOTES = ["♪", "♫"];
+const CELL_W = 14;
+const CELL_H = 16;
+const FLOOR = 0.44; // field values below this render as blank paper
 
-/* ------------------------------------------------------------------ */
-/* WaveField — the lobby's background: horizontal sound-waves drifting  */
-/* across the page (reactbits' Waves, redrawn as audio). Lines undulate */
-/* slowly on their own and bend toward the cursor, with a warm pool of  */
-/* light where you point. Reduced motion gets one static drawing.       */
-/* ------------------------------------------------------------------ */
+type Pulse = { x: number; y: number; t0: number };
 
-const WAVE_LINES = 18;
-const WAVE_STEP = 12; // px between sample points along each line
-
-export function WaveField() {
+export function AsciiField() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -50,19 +44,49 @@ export function WaveField() {
     let raf = 0;
     let w = 0;
     let h = 0;
+    let cols = 0;
+    let rows = 0;
+    let frame = 0;
     const target = { x: -9999, y: -9999 };
     const pos = { x: -9999, y: -9999 };
     let energy = 0;
     let active = false;
+    let pulses: Pulse[] = [];
+
+    // Every glyph is baked once (ink + amber variants); frames only blit.
+    let ink: HTMLCanvasElement[] = [];
+    let hot: HTMLCanvasElement[] = [];
+
+    function bake(dpr: number) {
+      const glyphs = [...RAMP, ...NOTES];
+      const make = (ch: string, color: string) => {
+        const tile = document.createElement("canvas");
+        tile.width = CELL_W * dpr;
+        tile.height = CELL_H * dpr;
+        const g = tile.getContext("2d")!;
+        g.scale(dpr, dpr);
+        g.font = "12px ui-monospace, Menlo, monospace";
+        g.textAlign = "center";
+        g.textBaseline = "middle";
+        g.fillStyle = color;
+        g.fillText(ch, CELL_W / 2, CELL_H / 2 + 1);
+        return tile;
+      };
+      ink = glyphs.map((ch) => make(ch, "rgba(42, 56, 51, 0.14)"));
+      hot = glyphs.map((ch) => make(ch, "rgba(151, 103, 21, 0.32)"));
+    }
 
     function resize() {
       if (!canvas || !ctx) return;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       w = window.innerWidth;
       h = window.innerHeight;
+      cols = Math.ceil(w / CELL_W);
+      rows = Math.ceil(h / CELL_H);
       canvas.width = w * dpr;
       canvas.height = h * dpr;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      bake(dpr);
     }
     resize();
 
@@ -70,52 +94,62 @@ export function WaveField() {
       if (!ctx) return;
       ctx.clearRect(0, 0, w, h);
 
-      // A soft warm pool of light where the cursor rests.
-      if (energy > 0.01) {
-        ctx.globalAlpha = energy;
-        const halo = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, 320);
-        halo.addColorStop(0, "rgba(242, 191, 76, 0.13)");
-        halo.addColorStop(1, "rgba(242, 191, 76, 0)");
-        ctx.fillStyle = halo;
-        ctx.fillRect(pos.x - 320, pos.y - 320, 640, 640);
-        ctx.globalAlpha = 1;
-      }
+      // The two ambient sources sit just off-stage, like monitors at the
+      // edges of a room, so their ripples arc across the whole page.
+      const s1x = w * 0.12;
+      const s1y = h * 1.08;
+      const s2x = w * 0.92;
+      const s2y = -h * 0.12;
 
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = "rgba(42, 56, 51, 0.10)";
-      for (let i = 0; i < WAVE_LINES; i += 1) {
-        const baseY = ((i + 0.5) / WAVE_LINES) * h;
-        ctx.beginPath();
-        for (let x = 0; x <= w + WAVE_STEP; x += WAVE_STEP) {
-          // Two slow sines per line, out of phase line-to-line, so the field
-          // rolls like a quiet room tone rather than a synchronized ripple.
-          let y =
-            baseY +
-            8 * Math.sin(x * 0.006 + t * 0.00058 + i * 0.72) +
-            12 * Math.sin(x * 0.0021 - t * 0.00041 + i * 1.31);
+      for (let row = 0; row < rows; row += 1) {
+        const cy = row * CELL_H + CELL_H / 2;
+        for (let col = 0; col < cols; col += 1) {
+          const cx = col * CELL_W + CELL_W / 2;
+
+          const d1 = Math.hypot(cx - s1x, cy - s1y);
+          const d2 = Math.hypot(cx - s2x, cy - s2y);
+          let v =
+            0.5 +
+            0.26 * Math.sin(d1 * 0.014 - t * 0.0011) +
+            0.2 * Math.sin(d2 * 0.0095 + t * 0.00082);
+
+          // The cursor as a live source: standing ripples around it.
+          let heat = 0;
           if (energy > 0.01) {
-            // Lines lean gently toward the cursor, amplitude swelling nearby.
-            const dx = x - pos.x;
-            const dy = baseY - pos.y;
-            const gauss = Math.exp(-(dx * dx + dy * dy) / 52000) * energy;
-            y += (pos.y - y) * 0.32 * gauss;
-            y += 6 * gauss * Math.sin(x * 0.05 + t * 0.004);
+            const dc = Math.hypot(cx - pos.x, cy - pos.y);
+            const damp = Math.exp(-dc / 380) * energy;
+            v += Math.sin(dc * 0.045 - t * 0.006) * 0.6 * damp;
+            heat = damp;
           }
-          if (x === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
+
+          // One-shot click pulses: a wavefront travelling outward.
+          for (const p of pulses) {
+            const age = t - p.t0;
+            const dp = Math.hypot(cx - p.x, cy - p.y);
+            const front = dp - age * 0.34;
+            v += Math.exp(-(front * front) / 5200) * Math.exp(-age / 900) * 0.9;
+          }
+
+          if (v < FLOOR) continue;
+          let idx = Math.min(RAMP.length - 1, Math.floor(((v - FLOOR) / (1 - FLOOR)) * RAMP.length));
+          // The loudest crests occasionally sing.
+          if (v > 0.92 && (col * 928371 + row * 123457) % 97 > 82) {
+            idx = RAMP.length + ((col + row) % NOTES.length);
+          }
+          const tiles = heat > 0.18 ? hot : ink;
+          ctx.drawImage(tiles[idx], col * CELL_W, row * CELL_H, CELL_W, CELL_H);
         }
-        ctx.stroke();
       }
     }
 
     if (reduce) {
-      // One still drawing — the texture without the motion.
       drawFrame(0);
-      window.addEventListener("resize", () => {
+      const onResize = () => {
         resize();
         drawFrame(0);
-      });
-      return;
+      };
+      window.addEventListener("resize", onResize);
+      return () => window.removeEventListener("resize", onResize);
     }
 
     function onMove(e: PointerEvent) {
@@ -130,22 +164,31 @@ export function WaveField() {
     function onLeave() {
       active = false;
     }
+    function onDown(e: PointerEvent) {
+      pulses.push({ x: e.clientX, y: e.clientY, t0: performance.now() });
+      if (pulses.length > 4) pulses = pulses.slice(-4);
+    }
 
     function loop(t: number) {
       raf = requestAnimationFrame(loop);
-      pos.x += (target.x - pos.x) * 0.1;
-      pos.y += (target.y - pos.y) * 0.1;
-      energy += ((active ? 1 : 0) - energy) * 0.06;
+      frame += 1;
+      if (frame % 2) return; // 30fps is plenty for a texture this slow
+      pos.x += (target.x - pos.x) * 0.14;
+      pos.y += (target.y - pos.y) * 0.14;
+      energy += ((active ? 1 : 0) - energy) * 0.07;
+      pulses = pulses.filter((p) => t - p.t0 < 3200);
       drawFrame(t);
     }
     raf = requestAnimationFrame(loop);
 
     window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerdown", onDown);
     document.documentElement.addEventListener("mouseleave", onLeave);
     window.addEventListener("resize", resize);
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerdown", onDown);
       document.documentElement.removeEventListener("mouseleave", onLeave);
       window.removeEventListener("resize", resize);
     };

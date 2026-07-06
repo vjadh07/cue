@@ -7,16 +7,14 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
-import { MAT_CLOUD } from "./mat-art";
 import {
-  Aurora,
+  AsciiField,
   EqRibbon,
   ProximityText,
   Reveal,
   SpotlightCard,
   TagCycler,
   useEntranceStage,
-  WaveField,
 } from "./lobby-fx";
 
 // The words the headline chip cycles through — all real v3 audio tags.
@@ -177,19 +175,9 @@ export default function Lobby() {
 
   return (
     <main className="lobby relative min-h-[100dvh] overflow-hidden">
-      {/* The living backdrop: aurora wash under drifting sound-waves. */}
-      <Aurora />
-      <WaveField />
-
-      {/* The dither clouds, printed faintly on the paper. */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 hidden select-none md:block">
-        <pre className="absolute -right-14 top-6 font-mono text-[11px] leading-[13px] text-ink-deep/[0.06]">
-          {MAT_CLOUD}
-        </pre>
-        <pre className="absolute -left-20 bottom-10 rotate-180 font-mono text-[10px] leading-[12px] text-ink-deep/[0.05]">
-          {MAT_CLOUD}
-        </pre>
-      </div>
+      {/* The living backdrop: ASCII sound propagating through the room —
+          ambient ripples, cursor as a source, clicks emit pulses. */}
+      <AsciiField />
 
       <div className="relative mx-auto flex min-h-[100dvh] w-full max-w-5xl flex-col px-6">
         {/* Nav */}
