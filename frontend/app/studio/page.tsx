@@ -151,6 +151,14 @@ export default function Home() {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [voice, setVoice] = useState("");
 
+  // Bring-your-own-key: a visitor's ElevenLabs key. Lives only in this
+  // browser (its own storage entry, never in the workbench blob) and rides
+  // each render/read as a header, so their reads spend their credits.
+  const [elKey, setElKey] = useState("");
+  const [keyPanelOpen, setKeyPanelOpen] = useState(false);
+  const [keyInput, setKeyInput] = useState("");
+  const [keyStatus, setKeyStatus] = useState<"none" | "checking" | "ok" | "bad">("none");
+
   // For conversational scripts: each named speaker -> a voice_id. Unlabeled
   // (narrator) lines use `voice`.
   const [cast, setCast] = useState<Record<string, string>>({});
@@ -202,6 +210,12 @@ export default function Home() {
     } catch {
       /* corrupt storage — start fresh */
     }
+    try {
+      const savedKey = localStorage.getItem("cue-elevenlabs-key");
+      if (savedKey) setElKey(savedKey);
+    } catch {
+      /* best-effort */
+    }
     hydrated.current = true;
   }, []);
 
@@ -231,19 +245,72 @@ export default function Home() {
       });
   }, []);
 
-  // Load the available voices once. Keep a restored voice if it still exists;
-  // otherwise fall back to the backend's default.
+  // Load the available voices. With a visitor key the list is THEIR account's
+  // voices (clones included); if their stored key has gone stale we mark it
+  // and reload the host list so the picker never sits empty. Keep a restored
+  // voice if it still exists; otherwise fall back to the backend's default.
   useEffect(() => {
-    fetch(`${BACKEND_URL}/voices`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((data: { voices: Voice[]; default: string }) => {
-        setVoices(data.voices);
-        setVoice((prev) => (prev && data.voices.some((v) => v.id === prev) ? prev : data.default));
-      })
-      .catch(() => {
+    const load = (headers?: Record<string, string>) =>
+      fetch(`${BACKEND_URL}/voices`, headers ? { headers } : undefined)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((data: { voices: Voice[]; default: string }) => {
+          setVoices(data.voices);
+          setVoice((prev) => (prev && data.voices.some((v) => v.id === prev) ? prev : data.default));
+        });
+
+    if (elKey) {
+      load({ "X-ElevenLabs-Key": elKey })
+        .then(() => setKeyStatus("ok"))
+        .catch(() => {
+          setKeyStatus("bad");
+          load().catch(() => {
+            /* leave the picker empty; renders just use the backend default */
+          });
+        });
+    } else {
+      load().catch(() => {
         /* leave the picker empty; renders just use the backend default */
       });
-  }, []);
+    }
+  }, [elKey]);
+
+  // The header every credit-spending call carries when a visitor key is set.
+  const keyHeader: Record<string, string> = elKey ? { "X-ElevenLabs-Key": elKey } : {};
+
+  // Verify a pasted key against /voices before trusting it, then keep it in
+  // this browser only. Removing it goes back to the studio's own credits.
+  async function handleSaveKey() {
+    const candidate = keyInput.trim();
+    if (!candidate) return;
+    setKeyStatus("checking");
+    try {
+      const response = await fetch(`${BACKEND_URL}/voices`, {
+        headers: { "X-ElevenLabs-Key": candidate },
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      setElKey(candidate); // triggers the voices reload with the new key
+      setKeyInput("");
+      setKeyStatus("ok");
+      try {
+        localStorage.setItem("cue-elevenlabs-key", candidate);
+      } catch {
+        /* best-effort */
+      }
+    } catch {
+      setKeyStatus("bad");
+    }
+  }
+
+  function handleRemoveKey() {
+    setElKey("");
+    setKeyInput("");
+    setKeyStatus("none");
+    try {
+      localStorage.removeItem("cue-elevenlabs-key");
+    } catch {
+      /* best-effort */
+    }
+  }
 
   // One writer's-room turn: send the whole thread so "make it shorter" revises
   // the brain's own last draft. The reply may carry a new draft.
@@ -365,7 +432,7 @@ export default function Home() {
     try {
       const response = await fetch(`${BACKEND_URL}/render`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...keyHeader },
         body: JSON.stringify({
           text: line.text,
           settings: line.settings,
@@ -400,7 +467,7 @@ export default function Home() {
     try {
       const response = await fetch(`${BACKEND_URL}/read`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...keyHeader },
         body: JSON.stringify({
           lines: lines.map((line) => ({
             text: line.text,
@@ -467,14 +534,72 @@ export default function Home() {
             >
               Control room · mat nº 001 · 24″ × 18″
             </span>
+            <button
+              onClick={() => setKeyPanelOpen((open) => !open)}
+              aria-expanded={keyPanelOpen}
+              className={BTN_QUIET + " px-3 py-1.5"}
+            >
+              {elKey ? (keyStatus === "bad" ? "Key: check it" : "Key: yours") : "Use your key"}
+            </button>
             <button onClick={handleClearMat} className={BTN_QUIET + " px-3 py-1.5"}>
               Clear mat
             </button>
           </div>
         </header>
 
+        {keyPanelOpen && (
+          <div className="mb-8 rounded border border-edge bg-panel p-4">
+            <p className="max-w-[68ch] text-sm leading-relaxed text-ink-2">
+              Reads normally spend this studio&apos;s ElevenLabs credits. Paste your own API
+              key to spend yours instead. It stays in this browser, is sent only with your
+              requests, and is never stored on the server. Bonus: the voice pickers switch
+              to your account&apos;s voices, clones included.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {elKey ? (
+                <>
+                  <span className="font-mono text-xs text-chalk">
+                    {keyStatus === "bad"
+                      ? "ElevenLabs is rejecting your saved key. Replace or remove it."
+                      : "Using your key. Your credits, your voices."}
+                  </span>
+                  <button onClick={handleRemoveKey} className={BTN_QUIET + " px-3 py-1.5"}>
+                    Remove key
+                  </button>
+                </>
+              ) : (
+                <>
+                  <input
+                    aria-label="Your ElevenLabs API key"
+                    type="password"
+                    value={keyInput}
+                    onChange={(e) => setKeyInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveKey();
+                    }}
+                    placeholder="xi-..."
+                    className={FIELD + " max-w-xs py-2 font-mono text-xs"}
+                  />
+                  <button
+                    onClick={handleSaveKey}
+                    disabled={keyStatus === "checking" || keyInput.trim() === ""}
+                    className={BTN_QUIET + " px-3 py-1.5"}
+                  >
+                    {keyStatus === "checking" ? "Checking…" : "Save key"}
+                  </button>
+                  {keyStatus === "bad" && (
+                    <span className="font-mono text-xs text-danger">
+                      ElevenLabs rejected that key.
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
         <p className="mb-8 max-w-[62ch] text-sm leading-relaxed text-chalk">
-          Paste a script — one line per row — and give a single direction in plain English.
+          Paste a script, one line per row, and give a single direction in plain English.
           The brain reads the whole script and performs each line for where it sits in the
           arc. Prefix a line with a name (<span className="font-mono">ALICE:</span>) to make
           it a conversation and give each character their own voice.
@@ -489,7 +614,7 @@ export default function Home() {
                 <div ref={threadRef} className="flex max-h-[55dvh] min-h-[160px] flex-col gap-3 overflow-y-auto pr-1">
                   {chatLog.length === 0 && (
                     <p className="text-sm leading-relaxed text-ink-3">
-                      Describe a scene — <span className="font-mono">“two rival chefs, one kitchen”</span> —
+                      Describe a scene, like <span className="font-mono">“two rival chefs, one kitchen”</span>,
                       and I&apos;ll draft it. Then direct the draft like a writer: “shorter”,
                       “angrier ending”, “make BOB apologetic”.
                     </p>

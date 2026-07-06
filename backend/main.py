@@ -12,7 +12,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -114,7 +114,7 @@ def root():
 
 
 @app.post("/speak")
-def speak(request: SpeakRequest):
+def speak(request: SpeakRequest, x_elevenlabs_key: str = Header(default="")):
     text = request.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
@@ -124,7 +124,9 @@ def speak(request: SpeakRequest):
     brain = brain_engine.interpret(text, request.direction)
 
     # 2. Render it (voice: cache → ElevenLabs v3 with tags → Piper fallback).
-    rendered = voice_engine.render(text, brain["settings"], brain["tags"])
+    rendered = voice_engine.render(
+        text, brain["settings"], brain["tags"], api_key=x_elevenlabs_key
+    )
 
     return {
         **rendered,
@@ -163,10 +165,11 @@ def direct(request: DirectRequest):
 
 
 @app.post("/render")
-def render(request: RenderRequest):
+def render(request: RenderRequest, x_elevenlabs_key: str = Header(default="")):
     """Render one line into audio using the settings/tags it already got from
     /direct. This is what Play calls — it does NOT re-interpret, just voices the
-    line (cache → ElevenLabs v3 with tags → Piper fallback)."""
+    line (cache → ElevenLabs v3 with tags → Piper fallback). A visitor's own
+    ElevenLabs key (X-ElevenLabs-Key) spends their credits, not the host's."""
     text = request.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
@@ -176,7 +179,9 @@ def render(request: RenderRequest):
     settings = clean(request.settings)
     tags = clean_tags(request.tags)
     delivery = verify_delivery(text, request.delivery) or ""
-    return voice_engine.render(text, settings, tags, request.voice, delivery)
+    return voice_engine.render(
+        text, settings, tags, request.voice, delivery, api_key=x_elevenlabs_key
+    )
 
 
 @app.post("/chat")
@@ -199,7 +204,7 @@ def chat(request: ChatRequest):
 
 
 @app.post("/read")
-def read(request: ReadRequest):
+def read(request: ReadRequest, x_elevenlabs_key: str = Header(default="")):
     """Step 5: perform the whole script as ONE continuous track. Renders every
     line (cache -> ElevenLabs/Piper) in its own voice, then stitches the clips
     together with a natural pause between lines. The stitched track is cached
@@ -216,7 +221,9 @@ def read(request: ReadRequest):
             continue
         settings = clean(line.settings)
         delivery = verify_delivery(text, line.delivery) or ""
-        rendered = voice_engine.render(text, settings, clean_tags(line.tags), line.voice, delivery)
+        rendered = voice_engine.render(
+            text, settings, clean_tags(line.tags), line.voice, delivery, api_key=x_elevenlabs_key
+        )
         clips.append(rendered)
         # Clips are rendered volume-free (volume is a playback concern), so the
         # line's volume is baked into the stitched track as gain instead.
@@ -246,12 +253,15 @@ def music():
 
 
 @app.get("/voices")
-def voices():
+def voices(x_elevenlabs_key: str = Header(default="")):
     """The voices the picker offers — the ones in your ElevenLabs account
-    (premade + any you've saved or created). Falls back to a small curated list
-    if ElevenLabs can't be reached, so the dropdown is never empty."""
+    (premade + any you've saved or created). With a visitor's own key
+    (X-ElevenLabs-Key) it lists THEIR account's voices instead, and a bad
+    pasted key gets a clear 401 so the studio can verify it on the spot.
+    Without an explicit key it falls back to a small curated list whenever
+    ElevenLabs can't be reached, so the dropdown is never empty."""
     default = os.environ.get("ELEVENLABS_VOICE_ID", DEFAULT_VOICE_ID)
-    key = os.environ.get("ELEVENLABS_API_KEY", "")
+    key = x_elevenlabs_key or os.environ.get("ELEVENLABS_API_KEY", "")
     if key:
         try:
             response = httpx.get(
@@ -267,7 +277,10 @@ def voices():
             if mapped:
                 return {"voices": mapped, "default": default}
         except Exception:
-            pass  # fall through to the curated list
+            # A key the visitor explicitly supplied deserves a real answer,
+            # not a silent fallback — this is how the studio validates it.
+            if x_elevenlabs_key:
+                raise HTTPException(status_code=401, detail="ElevenLabs rejected this key")
     return {"voices": FALLBACK_VOICES, "default": default}
 
 

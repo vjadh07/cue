@@ -22,8 +22,16 @@ class Engine:
         self.cache = cache
 
     def render(
-        self, text: str, settings: dict, tags: list, voice: str = "", delivery: str = ""
+        self,
+        text: str,
+        settings: dict,
+        tags: list,
+        voice: str = "",
+        delivery: str = "",
+        api_key: str = "",
     ) -> dict:
+        # api_key is whose account pays (bring-your-own-key); it never enters
+        # the cache key — the same render is the same audio for everyone.
         # 1. If any provider already has this exact render cached, reuse it.
         for provider in self.providers:
             key = self.cache.key(provider.name, settings, text, tags, voice, delivery)
@@ -40,7 +48,7 @@ class Engine:
             audio = None
             for attempt in range(2):
                 try:
-                    audio = provider.synthesize(text, settings, tags, voice, delivery)
+                    audio = provider.synthesize(text, settings, tags, voice, delivery, api_key)
                     break
                 except Exception:
                     if attempt == 0:

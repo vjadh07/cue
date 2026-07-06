@@ -41,10 +41,19 @@ class ElevenLabsProvider:
         self.model = os.environ.get("ELEVENLABS_MODEL", DEFAULT_MODEL)
 
     def synthesize(
-        self, text: str, settings: dict, tags: list, voice: str = "", delivery: str = ""
+        self,
+        text: str,
+        settings: dict,
+        tags: list,
+        voice: str = "",
+        delivery: str = "",
+        api_key: str = "",
     ) -> bytes:
-        # No key means this engine can't run — the Engine will fall back to Piper.
-        if not self.api_key:
+        # A visitor's own key (bring-your-own-key) wins over the host's .env
+        # key, so their reads spend their credits. Never stored, never logged.
+        key = api_key or self.api_key
+        # No key at all means this engine can't run — the Engine falls back.
+        if not key:
             raise RuntimeError("ELEVENLABS_API_KEY is not set")
 
         # The caller can pick the voice (the actor); fall back to the default.
@@ -65,7 +74,7 @@ class ElevenLabsProvider:
         response = httpx.post(
             f"{ELEVENLABS_URL}/{voice_id}",
             headers={
-                "xi-api-key": self.api_key,
+                "xi-api-key": key,
                 "Content-Type": "application/json",
             },
             json={
@@ -103,12 +112,19 @@ class PiperProvider:
         return self._voice
 
     def synthesize(
-        self, text: str, settings: dict, tags: list, voice: str = "", delivery: str = ""
+        self,
+        text: str,
+        settings: dict,
+        tags: list,
+        voice: str = "",
+        delivery: str = "",
+        api_key: str = "",
     ) -> bytes:
         """Render text to WAV bytes. Piper has only its one local model, so it
         ignores the chosen `voice`, the expressive controls (stability/style),
-        the audio tags, and the delivery (it would read the [tags] out loud) —
-        it can only honor speed, speaking the clean text."""
+        the audio tags, the delivery (it would read the [tags] out loud), and
+        the api_key (it's local — nobody's credits) — it can only honor speed,
+        speaking the clean text."""
         # Piper's length_scale stretches time, so it's the inverse of speed:
         # faster speech = shorter = smaller length_scale.
         config = SynthesisConfig(length_scale=1.0 / settings["speed"])

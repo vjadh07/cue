@@ -37,12 +37,12 @@ const STEPS: { n: string; title: string; body: string }[] = [
   {
     n: "01",
     title: "Write",
-    body: "Paste a script, or chat one into existence in the writer's room — “two old friends, one hiding something” — and shape it draft by draft.",
+    body: "Paste a script, or chat one into existence in the writer's room. Ask for “two old friends, one hiding something” and shape it draft by draft.",
   },
   {
     n: "02",
     title: "Direct",
-    body: "Give one note in plain English — “build from calm to furious” — and the brain marks up every line like an actor's script, beat by beat.",
+    body: "Give one note in plain English, like “build from calm to furious”. The brain marks up every line the way an actor would, beat by beat.",
   },
   {
     n: "03",
@@ -212,7 +212,7 @@ export default function Lobby() {
             {...rise(8)}
             className={`${rise(8).className} mt-7 max-w-[52ch] text-balance text-base leading-relaxed text-ink-deep-2 sm:text-lg`}
           >
-            Cue turns plain-English direction into real performances — voices that
+            Cue turns plain-English direction into real performances: voices that
             whisper, break, and shout on your note, stitched with music into one
             produced track.
           </p>
@@ -251,7 +251,7 @@ export default function Lobby() {
             </h2>
             <p className="mt-3 max-w-[58ch] text-ink-deep-2">
               No sliders, no timeline editing. You say what you want the way you&apos;d
-              say it to a person — Cue works out the rest.
+              say it to a person. Cue works out the rest.
             </p>
           </Reveal>
 
@@ -280,12 +280,12 @@ export default function Lobby() {
                 Your words. Its performance.
               </h2>
               <p className="mt-4 max-w-[48ch] leading-relaxed text-ink-deep-2">
-                The brain rewrites each line the way an actor marks up a script —
-                cues at the exact beat where the feeling turns. Your words are never
-                changed: a word-for-word validator guarantees it.
+                The brain rewrites each line the way an actor marks up a script,
+                placing cues at the exact beat where the feeling turns. Your words
+                are never changed: a word-for-word validator guarantees it.
               </p>
               <p className="mt-3 max-w-[48ch] font-mono text-xs text-ink-deep-2">
-                Try a direction on the right — same line, different performance.
+                Try a direction on the right. Same line, different performance.
               </p>
             </Reveal>
             <Reveal delay={120}>

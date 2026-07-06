@@ -19,7 +19,7 @@ class FakeProvider:
         self.calls = 0
         self.last_voice = None
 
-    def synthesize(self, text, settings, tags, voice="", delivery=""):
+    def synthesize(self, text, settings, tags, voice="", delivery="", api_key=""):
         self.calls += 1
         self.last_voice = voice
         self.last_delivery = delivery
