@@ -88,6 +88,23 @@ npm run dev          # http://localhost:3000
 
 The interactive API docs are at `http://localhost:8000/docs`.
 
+## Table reads: bring a real screenplay
+
+Cue imports the Fountain format (the plain-text screenplay format Highland,
+WriterDuet, and Final Draft all export). Paste or upload a .fountain draft and
+Cue parses it into a performable script: character extensions merge (DEV,
+DEV (V.O.) and DEV (CONT'D) are one character), parentheticals like `(quietly)`
+become per-line direction for the brain instead of spoken text, and notes,
+boneyard, sections, and transitions vanish. Cast each character, press play,
+and hear a table read of your script before anyone else does.
+
+Every full read also produces frame-accurate SRT and VTT subtitle files for
+free: the stitcher already knows each line's exact duration and every pause,
+so the captions are pure timing math, labeled by character, byte-identical
+whichever voice engine performed the audio.
+
+Both features work fully offline on the local Piper voice, with no API key.
+
 ## Bring your own key
 
 Visitors can paste their own ElevenLabs API key in the studio ("Use your key"),

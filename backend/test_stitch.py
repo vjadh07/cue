@@ -32,7 +32,7 @@ def test_two_clips_are_joined_with_one_pause(tmp_path):
     a = make_wav(tmp_path / "a.wav", 0.5)
     b = make_wav(tmp_path / "b.wav", 0.5)
 
-    track = stitch([a, b], pause_ms=400)
+    track, _ = stitch([a, b], pause_ms=400)
 
     # 500 + 400 + 500 = 1400ms; mp3 framing adds a little slack.
     assert abs(duration_ms(track) - 1400) < 100
@@ -41,7 +41,7 @@ def test_two_clips_are_joined_with_one_pause(tmp_path):
 def test_single_clip_gets_no_pause(tmp_path):
     a = make_wav(tmp_path / "a.wav", 0.5)
 
-    track = stitch([a], pause_ms=400)
+    track, _ = stitch([a], pause_ms=400)
 
     assert abs(duration_ms(track) - 500) < 100
 
@@ -49,7 +49,7 @@ def test_single_clip_gets_no_pause(tmp_path):
 def test_result_is_valid_audio_bytes(tmp_path):
     a = make_wav(tmp_path / "a.wav", 0.3)
 
-    track = stitch([a])
+    track, _ = stitch([a])
 
     assert isinstance(track, bytes)
     assert len(track) > 0
@@ -70,12 +70,43 @@ def test_per_line_volume_is_applied_to_the_track(tmp_path):
     a = make_wav(tmp_path / "a.wav", 0.5, amplitude=16000)
     b = make_wav(tmp_path / "b.wav", 0.5, amplitude=16000)
 
-    track = AudioSegment.from_file(io.BytesIO(stitch([a, b], pause_ms=400, volumes=[1.0, 0.5])))
+    data, _ = stitch([a, b], pause_ms=400, volumes=[1.0, 0.5])
+    track = AudioSegment.from_file(io.BytesIO(data))
 
     loud_half = track[0:450]
     quiet_half = track[950:1350]
     drop = loud_half.dBFS - quiet_half.dBFS
     assert 4 < drop < 8  # 0.5 volume = -6dB, with mp3 slack
+
+
+# --- the timeline: where each line sits in the stitched track ---
+
+
+def test_stitch_returns_a_segment_per_clip(tmp_path):
+    a = make_wav(tmp_path / "a.wav", 0.5)
+    b = make_wav(tmp_path / "b.wav", 0.3)
+    c = make_wav(tmp_path / "c.wav", 0.7)
+
+    _, segments = stitch([a, b, c], pause_ms=400)
+
+    assert segments == [
+        {"start_ms": 0, "end_ms": 500},
+        {"start_ms": 900, "end_ms": 1200},
+        {"start_ms": 1600, "end_ms": 2300},
+    ]
+
+
+def test_timeline_matches_without_restitching(tmp_path):
+    """timeline() computes the same segments from the clips alone — used to
+    backfill caption files for tracks that were stitched before captions
+    existed."""
+    from stitch import timeline
+
+    a = make_wav(tmp_path / "a.wav", 0.5)
+    b = make_wav(tmp_path / "b.wav", 0.3)
+
+    _, segments = stitch([a, b], pause_ms=400)
+    assert timeline([a, b], pause_ms=400) == segments
 
 
 # --- stitch_key: the cache id of a stitched track ---

@@ -170,6 +170,12 @@ export default function Home() {
   const [musicTracks, setMusicTracks] = useState<{ id: string; name: string }[]>([]);
   const [music, setMusic] = useState("");
 
+  // Screenplay import: the hidden file input, the action-lines toggle, and
+  // the "Imported 'Title': N characters" note after a successful import.
+  const fountainInputRef = useRef<HTMLInputElement>(null);
+  const [includeAction, setIncludeAction] = useState(false);
+  const [importNote, setImportNote] = useState("");
+
   // Which line is mid-render (waiting on /render) and which is playing. Only one
   // line plays at a time — we reuse a single <audio> element. Index -1 means the
   // stitched full read (not an individual line).
@@ -386,6 +392,43 @@ export default function Home() {
     }
   }
 
+  // Import a real screenplay (.fountain): the backend parses it into Cue's
+  // native script (merging DEV (V.O.) into DEV, carrying parentheticals as
+  // per-line hints) and it lands in the Script box like any other draft.
+  async function handleImportScreenplay(file: File) {
+    setErrorMessage("");
+    setImportNote("");
+    try {
+      const text = await file.text();
+      const response = await fetch(`${BACKEND_URL}/import/fountain`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, include_action: includeAction }),
+      });
+      if (response.status === 400) {
+        setErrorMessage("That file has no performable lines. Is it a screenplay?");
+        return;
+      }
+      if (!response.ok) throw new Error(`Backend responded with ${response.status}`);
+      const data: {
+        script: string;
+        title: string | null;
+        characters: string[];
+        dialogue_lines: number;
+      } = await response.json();
+      useDraft(data.script);
+      setImportNote(
+        `Imported ${data.title ? `“${data.title}”` : "screenplay"}: ` +
+          `${data.characters.length} character${data.characters.length === 1 ? "" : "s"}, ` +
+          `${data.dialogue_lines} lines. Now cast and direct it.`
+      );
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? `Couldn't import that file: ${err.message}` : "Couldn't import that file."
+      );
+    }
+  }
+
   // Move a draft from the writer's room into production.
   function useDraft(draft: string) {
     setScript(draft);
@@ -493,6 +536,7 @@ export default function Home() {
             tags: line.tags,
             voice: voiceFor(line),
             delivery: line.delivery ?? "",
+            speaker: line.speaker ?? "",
           })),
           music,
         }),
@@ -710,6 +754,38 @@ export default function Home() {
                 placeholder={"It was already too late.\nALICE: Where were you?\nBOB: ...out."}
                 className={FIELD + " resize-y"}
               />
+              {/* Table read: bring a real screenplay. Fountain is what Highland,
+                  WriterDuet, and Final Draft all export as plain text. */}
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <input
+                  ref={fountainInputRef}
+                  type="file"
+                  accept=".fountain,.txt,.spmd"
+                  className="hidden"
+                  aria-label="Screenplay file"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleImportScreenplay(file);
+                    e.target.value = ""; // allow re-importing the same file
+                  }}
+                />
+                <button
+                  onClick={() => fountainInputRef.current?.click()}
+                  className={BTN_QUIET + " px-3 py-1.5"}
+                >
+                  Import screenplay (.fountain)
+                </button>
+                <label className="flex cursor-pointer items-center gap-1.5 font-mono text-xs text-ink-3">
+                  <input
+                    type="checkbox"
+                    checked={includeAction}
+                    onChange={(e) => setIncludeAction(e.target.checked)}
+                    className="accent-[var(--cue)]"
+                  />
+                  narrator reads action lines
+                </label>
+                {importNote && <span className="font-mono text-xs text-chalk">{importNote}</span>}
+              </div>
             </Panel>
 
             {/* The direction and the narrator's voice, side by side. */}
@@ -824,9 +900,18 @@ export default function Home() {
                     </select>
                   )}
                   {readTrack && (
-                    <a href={`${BACKEND_URL}/audio/${readTrack}.mp3?download=1`} className={BTN_QUIET}>
-                      Download
-                    </a>
+                    <>
+                      <a href={`${BACKEND_URL}/audio/${readTrack}.mp3?download=1`} className={BTN_QUIET}>
+                        Download
+                      </a>
+                      <a
+                        href={`${BACKEND_URL}/captions/${readTrack}.srt?download=1`}
+                        className={BTN_QUIET}
+                        title="Frame-accurate subtitles, straight from the stitcher's timeline"
+                      >
+                        Subtitles .srt
+                      </a>
+                    </>
                   )}
                   {/* Level meter: alive only while audio is playing. */}
                   <div className="ml-auto flex h-8 items-end gap-1" aria-hidden="true">

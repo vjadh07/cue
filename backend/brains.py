@@ -296,19 +296,34 @@ class BrainEngine:
 
         return {"settings": clean({}), "tags": [], "notes": "", "delivery": None, "brain": "none"}
 
-    def interpret_script(self, lines: list[str], direction: str) -> list[dict]:
+    def interpret_script(
+        self, lines: list[str], direction: str, hints: list[str | None] | None = None
+    ) -> list[dict]:
         """Restyle a whole script under one direction. Each line is interpreted
         with the full script passed in as context, so the brain can read the arc
         (a line's place in the script) — not just the line alone. Fallback still
         happens per line, so one slow/failing line can't sink the rest.
 
+        `hints` carries optional per-line direction (a screenplay parenthetical
+        like `(quietly)`): it's folded into that one line's direction only, on
+        top of the global note.
+
         Lines are independent, so they're interpreted concurrently — a few
         workers, not one per line, to stay under Groq's free-tier rate limit.
         map() preserves input order regardless of completion order."""
+
+        def line_direction(index: int) -> str:
+            hint = hints[index] if hints and index < len(hints) else None
+            if not hint:
+                return direction
+            return f"{direction}. This line: {hint}" if direction else f"This line: {hint}"
+
         with ThreadPoolExecutor(max_workers=4) as pool:
             return list(
                 pool.map(
-                    lambda pair: self.interpret(pair[1], direction, script=lines, index=pair[0]),
+                    lambda pair: self.interpret(
+                        pair[1], line_direction(pair[0]), script=lines, index=pair[0]
+                    ),
                     enumerate(lines),
                 )
             )

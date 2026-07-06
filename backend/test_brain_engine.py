@@ -62,10 +62,12 @@ class FakeBrain:
         self.fail = fail
         self.calls = 0
         self.seen = []  # (script, index) passed on each call
+        self.directions = []  # the direction string passed on each call
 
     def interpret(self, line, direction, script=None, index=0):
         self.calls += 1
         self.seen.append((script, index))
+        self.directions.append(direction)
         if self.fail:
             raise RuntimeError(f"{self.name} down")
         return {"settings": S, "tags": ["sarcastic"], "notes": f"{self.name} read"}
@@ -152,6 +154,21 @@ def test_interpret_script_falls_back_per_line():
     results = BrainEngine([a, b]).interpret_script(["A", "B"], "warm")
     assert all(r["brain"] == "ollama" for r in results)
     assert a.calls == 2 and b.calls == 2
+
+
+def test_interpret_script_folds_per_line_hints_into_the_direction():
+    """A screenplay parenthetical ((quietly)) rides only its own line's
+    direction; lines without hints get the plain global direction."""
+    a = FakeBrain("groq")
+    BrainEngine([a]).interpret_script(["A", "B"], "warm", hints=[None, "quietly"])
+    directions = sorted(a.directions)
+    assert directions == sorted(["warm", "warm. This line: quietly"])
+
+
+def test_interpret_script_hint_alone_still_directs():
+    a = FakeBrain("groq")
+    BrainEngine([a]).interpret_script(["A"], "", hints=["beat, then softer"])
+    assert a.directions == ["This line: beat, then softer"]
 
 
 # --- chat: the writer's room (only LLM brains can write) ---

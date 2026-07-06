@@ -22,13 +22,15 @@ load_dotenv(Path(__file__).parent / ".env")
 
 from brains import BrainEngine, GroqBrain, KeywordBrain, OllamaBrain
 from cache import AudioCache
+from captions import srt, vtt
 from delivery import verify_delivery
 from engine import Engine
-from music import MUSIC_DIR, list_music, underlay
+from fountain import characters, parse_fountain, to_cue_script
+from music import INTRO_MS, MUSIC_DIR, list_music, underlay
 from providers import DEFAULT_VOICE_ID, ElevenLabsProvider, PiperProvider
 from script import parse_script, speakers
 from settings import clean, clean_tags
-from stitch import stitch, stitch_key
+from stitch import stitch, stitch_key, timeline
 from voices import usable_voices
 
 app = FastAPI()
@@ -75,6 +77,14 @@ class RenderRequest(BaseModel):
     tags: list[str] = []
     voice: str = ""  # an ElevenLabs voice_id; empty = the default voice
     delivery: str = ""  # the performed rewrite; must speak exactly `text`'s words
+    speaker: str = ""  # the character name; only used to label captions
+
+
+class FountainRequest(BaseModel):
+    # A raw .fountain screenplay (pasted or uploaded). include_action = also
+    # read the action lines and scene headings, in the narrator's voice.
+    text: str
+    include_action: bool = False
 
 
 class ReadRequest(BaseModel):
@@ -146,12 +156,14 @@ def direct(request: DirectRequest):
     fast and spends no ElevenLabs credits."""
     parsed = parse_script(request.script)
     texts = [line["text"] for line in parsed]
-    interpretations = brain_engine.interpret_script(texts, request.direction)
+    hints = [line["hint"] for line in parsed]
+    interpretations = brain_engine.interpret_script(texts, request.direction, hints=hints)
     return {
         "lines": [
             {
                 "speaker": line["speaker"],
                 "text": line["text"],
+                "hint": line["hint"],
                 "settings": result["settings"],
                 "tags": result["tags"],
                 "notes": result["notes"],
@@ -220,6 +232,8 @@ def read(request: ReadRequest, x_elevenlabs_key: str = Header(default="")):
 
     clips = []
     volumes = []
+    cue_speakers = []
+    cue_texts = []
     for line in request.lines:
         text = line.text.strip()
         if not text:
@@ -237,6 +251,8 @@ def read(request: ReadRequest, x_elevenlabs_key: str = Header(default="")):
         # Clips are rendered volume-free (volume is a playback concern), so the
         # line's volume is baked into the stitched track as gain instead.
         volumes.append(settings["volume"])
+        cue_speakers.append(line.speaker.strip() or None)
+        cue_texts.append(text)
     if not clips:
         raise HTTPException(status_code=400, detail="lines are required")
 
@@ -244,14 +260,53 @@ def read(request: ReadRequest, x_elevenlabs_key: str = Header(default="")):
     music = request.music if any(t["id"] == request.music for t in list_music()) else ""
 
     key = stitch_key([c["audio_id"] for c in clips], volumes=volumes, music=music)
-    if not cache.has(key, "mp3"):
-        paths = [cache.path(c["audio_id"], c["ext"]) for c in clips]
-        track = stitch(paths, volumes=volumes)
+    paths = [cache.path(c["audio_id"], c["ext"]) for c in clips]
+    cached = cache.has(key, "mp3")
+    segments = None
+    if not cached:
+        track, segments = stitch(paths, volumes=volumes)
         if music:
             track = underlay(track, MUSIC_DIR / music)
         cache.write(key, "mp3", track)
-        return {"audio_id": key, "ext": "mp3", "engine": "stitch", "cached": False}
-    return {"audio_id": key, "ext": "mp3", "engine": "stitch", "cached": True}
+
+    # Captions ride along for free: the stitcher's timeline says exactly when
+    # each line plays (shifted by the intro when a music bed opens the track).
+    if not cache.has(key, "srt"):
+        if segments is None:
+            segments = timeline(paths)  # backfill for a pre-captions track
+        offset = INTRO_MS if music else 0
+        cues = [
+            {
+                "start_ms": segment["start_ms"] + offset,
+                "end_ms": segment["end_ms"] + offset,
+                "speaker": speaker,
+                "text": text,
+            }
+            for segment, speaker, text in zip(segments, cue_speakers, cue_texts)
+        ]
+        cache.write(key, "srt", srt(cues).encode())
+        cache.write(key, "vtt", vtt(cues).encode())
+
+    return {"audio_id": key, "ext": "mp3", "engine": "stitch", "cached": cached, "captions": True}
+
+
+@app.post("/import/fountain")
+def import_fountain(request: FountainRequest):
+    """Import a real screenplay: parse the Fountain format (what Highland,
+    WriterDuet, and Final Draft export as plain text) into Cue's native script,
+    merging character extensions (DEV (V.O.) is DEV), carrying parentheticals
+    as per-line direction hints, and dropping everything nobody speaks."""
+    parsed = parse_fountain(request.text)
+    script_text = to_cue_script(parsed, include_action=request.include_action)
+    if not script_text.strip():
+        raise HTTPException(status_code=400, detail="no performable lines found")
+    return {
+        "script": script_text,
+        "title": parsed["title"],
+        "characters": characters(parsed),
+        "dialogue_lines": sum(1 for e in parsed["elements"] if e["type"] == "dialogue"),
+        "action_lines": sum(1 for e in parsed["elements"] if e["type"] in ("action", "scene")),
+    }
 
 
 @app.get("/music")
@@ -291,6 +346,25 @@ def voices(x_elevenlabs_key: str = Header(default="")):
             if x_elevenlabs_key:
                 raise HTTPException(status_code=401, detail="ElevenLabs rejected this key")
     return {"voices": FALLBACK_VOICES, "default": default}
+
+
+SAFE_CAPTION_NAME = re.compile(r"[a-f0-9]{64}\.(srt|vtt)")
+
+
+@app.get("/captions/{filename}")
+def get_captions(filename: str, download: bool = False):
+    """The subtitle files written next to a stitched track — same id as the
+    audio, .srt or .vtt extension. Same hash-only naming rule as /audio."""
+    if not SAFE_CAPTION_NAME.fullmatch(filename):
+        raise HTTPException(status_code=404, detail="not found")
+    caption_path = cache.cache_dir / filename
+    if not caption_path.exists():
+        raise HTTPException(status_code=404, detail="not found")
+    ext = filename.rsplit(".", 1)[1]
+    media_type = "text/vtt" if ext == "vtt" else "application/x-subrip"
+    if download:
+        return FileResponse(caption_path, media_type=media_type, filename=f"cue-read.{ext}")
+    return FileResponse(caption_path, media_type=media_type)
 
 
 @app.get("/audio/{filename}")

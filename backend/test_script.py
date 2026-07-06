@@ -31,38 +31,38 @@ def test_empty_or_blank_block_is_empty_list():
 
 def test_unlabeled_lines_have_no_speaker():
     assert parse_script("We did it.\nAfter all this time.") == [
-        {"speaker": None, "text": "We did it."},
-        {"speaker": None, "text": "After all this time."},
+        {"speaker": None, "text": "We did it.", "hint": None},
+        {"speaker": None, "text": "After all this time.", "hint": None},
     ]
 
 
 def test_labeled_lines_split_speaker_from_text():
     assert parse_script("ALICE: Where were you?\nBOB: ...out.") == [
-        {"speaker": "ALICE", "text": "Where were you?"},
-        {"speaker": "BOB", "text": "...out."},
+        {"speaker": "ALICE", "text": "Where were you?", "hint": None},
+        {"speaker": "BOB", "text": "...out.", "hint": None},
     ]
 
 
 def test_mixed_labeled_and_unlabeled():
     assert parse_script("It was late.\nALICE: Where were you?") == [
-        {"speaker": None, "text": "It was late."},
-        {"speaker": "ALICE", "text": "Where were you?"},
+        {"speaker": None, "text": "It was late.", "hint": None},
+        {"speaker": "ALICE", "text": "Where were you?", "hint": None},
     ]
 
 
 def test_speaker_name_can_contain_spaces():
-    assert parse_script("Mr Smith: hello") == [{"speaker": "Mr Smith", "text": "hello"}]
+    assert parse_script("Mr Smith: hello") == [{"speaker": "Mr Smith", "text": "hello", "hint": None}]
 
 
 def test_a_colon_inside_a_sentence_is_not_a_speaker():
     # No speaker label: the time has a colon but it isn't "NAME: text".
     line = "Wait, it's 3:00 already"
-    assert parse_script(line) == [{"speaker": None, "text": line}]
+    assert parse_script(line) == [{"speaker": None, "text": line, "hint": None}]
 
 
 def test_colon_without_following_space_is_not_a_speaker():
     assert parse_script("ratio 16:9 looks right") == [
-        {"speaker": None, "text": "ratio 16:9 looks right"}
+        {"speaker": None, "text": "ratio 16:9 looks right", "hint": None}
     ]
 
 
@@ -98,3 +98,17 @@ def test_clean_generated_caps_length():
 
 def test_clean_generated_empty_input_is_empty():
     assert clean_generated("```\n\n```") == ""
+
+
+# --- hints: a parenthetical after the name is direction, never spoken ---
+
+
+def test_speaker_hint_is_extracted_not_spoken():
+    assert parse_script("DEV (quietly): The sign says open.") == [
+        {"speaker": "DEV", "text": "The sign says open.", "hint": "quietly"}
+    ]
+
+
+def test_hint_speakers_still_merge_with_plain_ones():
+    parsed = parse_script("DEV (quietly): hey\nDEV: hey again")
+    assert speakers(parsed) == ["DEV"]

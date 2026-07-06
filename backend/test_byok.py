@@ -138,7 +138,8 @@ def test_read_endpoint_forwards_header_key_to_every_line(client, monkeypatch, tm
     engine = RecordingEngine()
     monkeypatch.setattr(main, "voice_engine", engine)
     # stitching needs real clip files on disk — fake the whole stitch step
-    monkeypatch.setattr(main, "stitch", lambda paths, pause_ms=400, volumes=None: b"track")
+    monkeypatch.setattr(main, "stitch", lambda paths, pause_ms=400, volumes=None: (b"track", []))
+    monkeypatch.setattr(main, "timeline", lambda paths, pause_ms=400: [])
     monkeypatch.setattr(main.cache, "has", lambda key, ext: False)
     monkeypatch.setattr(main.cache, "write", lambda key, ext, data: None)
     monkeypatch.setattr(main.cache, "path", lambda key, ext: tmp_path / f"{key}.{ext}")

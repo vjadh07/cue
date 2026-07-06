@@ -40,10 +40,13 @@ def stitch_key(
 
 def stitch(
     paths: list[Path], pause_ms: int = PAUSE_MS, volumes: list[float] | None = None
-) -> bytes:
+) -> tuple[bytes, list[dict]]:
     """Concatenate audio files (wav or mp3, mixable) with silence between each,
-    returning one mp3 as bytes. Each clip's volume (0-1, from its line's
-    settings) is applied as gain — a whispered line stays quiet in the track."""
+    returning (mp3 bytes, timeline). Each clip's volume (0-1, from its line's
+    settings) is applied as gain — a whispered line stays quiet in the track.
+
+    The timeline is one {"start_ms", "end_ms"} per clip, in track time — the
+    exact windows the caption files are written from."""
     if not paths:
         raise ValueError("nothing to stitch")
 
@@ -55,6 +58,14 @@ def stitch(
             for clip, v in zip(clips, volumes)
         ]
 
+    segments = []
+    cursor = 0
+    for n, clip in enumerate(clips):
+        if n:
+            cursor += pause_ms
+        segments.append({"start_ms": cursor, "end_ms": cursor + len(clip)})
+        cursor += len(clip)
+
     track = clips[0]
     if len(clips) > 1:
         pause = AudioSegment.silent(duration=pause_ms)
@@ -63,4 +74,19 @@ def stitch(
 
     out = io.BytesIO()
     track.export(out, format="mp3")
-    return out.getvalue()
+    return out.getvalue(), segments
+
+
+def timeline(paths: list[Path], pause_ms: int = PAUSE_MS) -> list[dict]:
+    """The same per-clip windows stitch() reports, computed from the clips
+    alone — for backfilling caption files next to tracks that were stitched
+    before captions existed, without re-encoding anything."""
+    segments = []
+    cursor = 0
+    for n, path in enumerate(paths):
+        duration = len(AudioSegment.from_file(path))
+        if n:
+            cursor += pause_ms
+        segments.append({"start_ms": cursor, "end_ms": cursor + duration})
+        cursor += duration
+    return segments

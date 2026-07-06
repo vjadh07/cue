@@ -6,11 +6,13 @@ line is written `SPEAKER: text` and each speaker gets their own voice."""
 
 import re
 
-# A speaker label: a short name at the very start, then a colon and a space, then
-# the line. Requiring colon+space (and disallowing sentence punctuation in the
-# name) keeps things like "Wait, it's 3:00" or "ratio 16:9" from looking like a
-# speaker. Names may have letters/digits/spaces/apostrophes/hyphens, up to ~20 chars.
-_SPEAKER_RE = re.compile(r"^([\w '\-]{1,20}):\s+(.+)$")
+# A speaker label: a short name at the very start, an optional parenthetical
+# hint (screenplay-style per-line direction, e.g. `DEV (quietly):`), then a
+# colon and a space, then the line. Requiring colon+space (and disallowing
+# sentence punctuation in the name) keeps things like "Wait, it's 3:00" or
+# "ratio 16:9" from looking like a speaker. Names may have
+# letters/digits/spaces/apostrophes/hyphens, up to ~20 chars.
+_SPEAKER_RE = re.compile(r"^([\w '\-]{1,20})(?:\s*\(([^)]{1,60})\))?:\s+(.+)$")
 
 
 def split_lines(block: str) -> list[str]:
@@ -20,16 +22,25 @@ def split_lines(block: str) -> list[str]:
 
 
 def parse_script(block: str) -> list[dict]:
-    """Turn a script block into speaker-attributed lines: one {speaker, text} per
-    line. A line written `NAME: text` gets that speaker; any other line has
-    speaker None (the default/narrator voice)."""
+    """Turn a script block into speaker-attributed lines: one
+    {speaker, text, hint} per line. A line written `NAME: text` gets that
+    speaker; `NAME (quietly): text` also carries the parenthetical as a
+    per-line direction hint (spoken text never includes it); any other line
+    has speaker None (the default/narrator voice)."""
     result = []
     for line in split_lines(block):
         match = _SPEAKER_RE.match(line)
         if match:
-            result.append({"speaker": match.group(1).strip(), "text": match.group(2).strip()})
+            hint = match.group(2)
+            result.append(
+                {
+                    "speaker": match.group(1).strip(),
+                    "text": match.group(3).strip(),
+                    "hint": hint.strip() if hint and hint.strip() else None,
+                }
+            )
         else:
-            result.append({"speaker": None, "text": line})
+            result.append({"speaker": None, "text": line, "hint": None})
     return result
 
 
