@@ -176,7 +176,8 @@ def test_voices_endpoint_uses_header_key(client, monkeypatch):
 
 def test_voices_endpoint_rejects_bad_explicit_key(client, monkeypatch):
     """A key the visitor typed in gets a clear 401, not a silent fallback list —
-    this is what lets the studio verify a pasted key on the spot."""
+    this is what lets the studio verify a pasted key on the spot. The rejection
+    must never echo the key itself."""
 
     def fake_get(url, headers=None, timeout=None):
         request = httpx.Request("GET", url)
@@ -188,3 +189,39 @@ def test_voices_endpoint_rejects_bad_explicit_key(client, monkeypatch):
     response = client.get("/voices", headers={"X-ElevenLabs-Key": "bad-key"})
 
     assert response.status_code == 401
+    assert "bad-key" not in response.text
+
+
+class ExplodingEngine:
+    """Every render fails — the way Engine fails when all providers are down."""
+
+    def render(self, *args, **kwargs):
+        raise RuntimeError("all voice providers failed")
+
+
+def test_failed_render_is_a_clean_503_that_never_echoes_the_key(monkeypatch):
+    monkeypatch.setattr(main, "voice_engine", ExplodingEngine())
+    client = TestClient(main.app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/render",
+        json={"text": "hello"},
+        headers={"X-ElevenLabs-Key": "super-secret-key"},
+    )
+
+    assert response.status_code == 503
+    assert "super-secret-key" not in response.text
+
+
+def test_failed_read_is_a_clean_503_that_never_echoes_the_key(monkeypatch):
+    monkeypatch.setattr(main, "voice_engine", ExplodingEngine())
+    client = TestClient(main.app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/read",
+        json={"lines": [{"text": "hello"}]},
+        headers={"X-ElevenLabs-Key": "super-secret-key"},
+    )
+
+    assert response.status_code == 503
+    assert "super-secret-key" not in response.text

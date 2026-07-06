@@ -179,9 +179,14 @@ def render(request: RenderRequest, x_elevenlabs_key: str = Header(default="")):
     settings = clean(request.settings)
     tags = clean_tags(request.tags)
     delivery = verify_delivery(text, request.delivery) or ""
-    return voice_engine.render(
-        text, settings, tags, request.voice, delivery, api_key=x_elevenlabs_key
-    )
+    try:
+        return voice_engine.render(
+            text, settings, tags, request.voice, delivery, api_key=x_elevenlabs_key
+        )
+    except RuntimeError:
+        # Generic on purpose: error responses must never echo request details
+        # (a visitor's API key rides this request).
+        raise HTTPException(status_code=503, detail="no voice engine available")
 
 
 @app.post("/chat")
@@ -221,9 +226,13 @@ def read(request: ReadRequest, x_elevenlabs_key: str = Header(default="")):
             continue
         settings = clean(line.settings)
         delivery = verify_delivery(text, line.delivery) or ""
-        rendered = voice_engine.render(
-            text, settings, clean_tags(line.tags), line.voice, delivery, api_key=x_elevenlabs_key
-        )
+        try:
+            rendered = voice_engine.render(
+                text, settings, clean_tags(line.tags), line.voice, delivery, api_key=x_elevenlabs_key
+            )
+        except RuntimeError:
+            # Generic on purpose — see /render.
+            raise HTTPException(status_code=503, detail="no voice engine available")
         clips.append(rendered)
         # Clips are rendered volume-free (volume is a playback concern), so the
         # line's volume is baked into the stitched track as gain instead.

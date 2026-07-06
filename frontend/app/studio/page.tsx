@@ -158,6 +158,9 @@ export default function Home() {
   const [keyPanelOpen, setKeyPanelOpen] = useState(false);
   const [keyInput, setKeyInput] = useState("");
   const [keyStatus, setKeyStatus] = useState<"none" | "checking" | "ok" | "bad">("none");
+  // Session-only by default: the key dies with the tab unless the visitor
+  // explicitly asks this device to remember it.
+  const [rememberKey, setRememberKey] = useState(false);
 
   // For conversational scripts: each named speaker -> a voice_id. Unlabeled
   // (narrator) lines use `voice`.
@@ -211,8 +214,14 @@ export default function Home() {
       /* corrupt storage — start fresh */
     }
     try {
-      const savedKey = localStorage.getItem("cue-elevenlabs-key");
-      if (savedKey) setElKey(savedKey);
+      const remembered = localStorage.getItem("cue-elevenlabs-key");
+      const sessionOnly = sessionStorage.getItem("cue-elevenlabs-key");
+      if (remembered) {
+        setElKey(remembered);
+        setRememberKey(true);
+      } else if (sessionOnly) {
+        setElKey(sessionOnly);
+      }
     } catch {
       /* best-effort */
     }
@@ -292,7 +301,14 @@ export default function Home() {
       setKeyInput("");
       setKeyStatus("ok");
       try {
-        localStorage.setItem("cue-elevenlabs-key", candidate);
+        // Exactly one home for the key: this tab, or this device on request.
+        if (rememberKey) {
+          localStorage.setItem("cue-elevenlabs-key", candidate);
+          sessionStorage.removeItem("cue-elevenlabs-key");
+        } else {
+          sessionStorage.setItem("cue-elevenlabs-key", candidate);
+          localStorage.removeItem("cue-elevenlabs-key");
+        }
       } catch {
         /* best-effort */
       }
@@ -305,8 +321,10 @@ export default function Home() {
     setElKey("");
     setKeyInput("");
     setKeyStatus("none");
+    setRememberKey(false);
     try {
       localStorage.removeItem("cue-elevenlabs-key");
+      sessionStorage.removeItem("cue-elevenlabs-key");
     } catch {
       /* best-effort */
     }
@@ -551,9 +569,11 @@ export default function Home() {
           <div className="mb-8 rounded border border-edge bg-panel p-4">
             <p className="max-w-[68ch] text-sm leading-relaxed text-ink-2">
               Reads normally spend this studio&apos;s ElevenLabs credits. Paste your own API
-              key to spend yours instead. It stays in this browser, is sent only with your
-              requests, and is never stored on the server. Bonus: the voice pickers switch
-              to your account&apos;s voices, clones included.
+              key to spend yours instead. The key rides only your own requests, exists on
+              the server just long enough to reach ElevenLabs, and is never written to
+              disk, logged, or echoed in an error. By default it lasts until you close
+              this tab. The backend is open source, so you can verify every word of this.
+              Bonus: the voice pickers switch to your account&apos;s voices, clones included.
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {elKey ? (
@@ -587,6 +607,15 @@ export default function Home() {
                   >
                     {keyStatus === "checking" ? "Checking…" : "Save key"}
                   </button>
+                  <label className="flex cursor-pointer items-center gap-1.5 font-mono text-xs text-ink-3">
+                    <input
+                      type="checkbox"
+                      checked={rememberKey}
+                      onChange={(e) => setRememberKey(e.target.checked)}
+                      className="accent-[var(--cue)]"
+                    />
+                    remember on this device
+                  </label>
                   {keyStatus === "bad" && (
                     <span className="font-mono text-xs text-danger">
                       ElevenLabs rejected that key.
