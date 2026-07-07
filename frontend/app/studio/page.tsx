@@ -198,6 +198,12 @@ export default function Home() {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [voice, setVoice] = useState("");
 
+  // The local clone engine cold-starts (~30s) on its first render this
+  // session while its weights load. Once one local clip comes back we've
+  // warmed up, and later renders are quick — so the "warming up" hint only
+  // shows the first time.
+  const [localWarm, setLocalWarm] = useState(false);
+
   // Bring-your-own-key: a visitor's ElevenLabs key. Lives only in this
   // browser (its own storage entry, never in the workbench blob) and rides
   // each render/read as a header, so their reads spend their credits.
@@ -632,6 +638,9 @@ export default function Home() {
     return line.speaker ? cast[line.speaker] ?? voice : voice;
   }
 
+  // A local clone voice_id (Cue's on-device engine), which cold-starts.
+  const isLocalVoice = (v: string) => v.startsWith("local:");
+
   // Store a change into one take of one line, immutably.
   function patchTake(lineIndex: number, takeIndex: number, patch: Partial<Take>) {
     setLines((prev) =>
@@ -723,6 +732,7 @@ export default function Home() {
       });
       if (!response.ok) throw new Error(`Render failed (${response.status})`);
       const data = { audio_id: "", ext: "", ...(await response.json()) };
+      if (isLocalVoice(lineVoice)) setLocalWarm(true); // model is loaded now
 
       // The booth listens in the background while the clip plays.
       analyzeTake(i, line.active, data.audio_id, data.ext);
@@ -767,6 +777,7 @@ export default function Home() {
       const data: { audio_id: string; ext: string; clips?: { audio_id: string; ext: string }[] } =
         await response.json();
       setReadTrack(data.audio_id);
+      if (lines.some((l) => isLocalVoice(voiceFor(l)))) setLocalWarm(true);
 
       // The full read hands the booth every line's clip: the measured arc
       // fills in for the whole scene at once.
@@ -1229,7 +1240,13 @@ export default function Home() {
               <Panel title="Take" meta="one track · mp3">
                 <div className="flex flex-wrap items-center gap-3">
                   <button onClick={handleRead} disabled={stitching} className={BTN_PRIMARY}>
-                    {stitching ? "Stitching…" : readPlaying ? "Playing…" : "▶ Play full read"}
+                    {stitching
+                      ? lines.some((l) => isLocalVoice(voiceFor(l))) && !localWarm
+                        ? "Warming up… (~30s)"
+                        : "Stitching…"
+                      : readPlaying
+                        ? "Playing…"
+                        : "▶ Play full read"}
                   </button>
                   {musicTracks.length > 0 && (
                     <select
@@ -1418,7 +1435,13 @@ export default function Home() {
                           )}
                         </div>
                         <button onClick={() => handlePlay(i)} disabled={isLoading} className={BTN_QUIET + " shrink-0"}>
-                          {isLoading ? "Rendering…" : isPlaying ? "Playing…" : "Play"}
+                          {isLoading
+                            ? isLocalVoice(voiceFor(line)) && !localWarm
+                              ? "Warming up… (~30s)"
+                              : "Rendering…"
+                            : isPlaying
+                              ? "Playing…"
+                              : "Play"}
                         </button>
                       </div>
 
