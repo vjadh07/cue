@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
 import { MAT_CLOUD } from "../mat-art";
+import { Tour } from "./tour";
 
 // Where the Python backend is listening. For now this is hard-coded.
 const BACKEND_URL = "http://localhost:8000";
@@ -99,13 +100,18 @@ function Panel({
   title,
   meta,
   children,
+  anchor,
 }: {
   title: string;
   meta?: string;
   children: React.ReactNode;
+  anchor?: string; // data-tour target, for the guided tour spotlight
 }) {
   return (
-    <section className="rounded border border-edge bg-panel shadow-[0_2px_0_rgba(0,0,0,0.25)]">
+    <section
+      data-tour={anchor}
+      className="rounded border border-edge bg-panel shadow-[0_2px_0_rgba(0,0,0,0.25)]"
+    >
       <header className="flex items-baseline justify-between gap-3 border-b border-edge px-3 py-2">
         <h2 className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-3">{title}</h2>
         {meta && <span className="font-mono text-[10px] text-ink-3">{meta}</span>}
@@ -204,6 +210,9 @@ export default function Home() {
   // shows the first time.
   const [localWarm, setLocalWarm] = useState(false);
 
+  // The guided tour: auto-opens once on a first visit, reopenable any time.
+  const [tourOpen, setTourOpen] = useState(false);
+
   // Bring-your-own-key: a visitor's ElevenLabs key. Lives only in this
   // browser (its own storage entry, never in the workbench blob) and rides
   // each render/read as a header, so their reads spend their credits.
@@ -301,8 +310,24 @@ export default function Home() {
     } catch {
       /* best-effort */
     }
+    // First visit ever? Open the guided tour once.
+    try {
+      if (!localStorage.getItem("cue-tour-seen")) setTourOpen(true);
+    } catch {
+      /* best-effort */
+    }
     hydrated.current = true;
   }, []);
+
+  // Close the tour and remember it's been seen (the header button reopens it).
+  function closeTour() {
+    setTourOpen(false);
+    try {
+      localStorage.setItem("cue-tour-seen", "1");
+    } catch {
+      /* best-effort */
+    }
+  }
 
   // Save the workbench (debounced, so typing doesn't hammer storage).
   useEffect(() => {
@@ -836,6 +861,9 @@ export default function Home() {
             >
               Control room · mat nº 001 · 24″ × 18″
             </span>
+            <button onClick={() => setTourOpen(true)} className={BTN_QUIET + " px-3 py-1.5"}>
+              How it works
+            </button>
             <button
               onClick={() => setKeyPanelOpen((open) => !open)}
               aria-expanded={keyPanelOpen}
@@ -929,7 +957,7 @@ export default function Home() {
             { label: "produce", hint: "play the full read, then download the mp3 and subtitles" },
           ];
           return (
-            <div className="mb-8 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <div data-tour="stages" className="mb-8 flex flex-wrap items-baseline gap-x-4 gap-y-1">
               {steps.map((step, i) => (
                 <span key={step.label} className="flex items-baseline gap-4 font-mono text-[11px] uppercase tracking-[0.12em]">
                   <span
@@ -1016,7 +1044,7 @@ export default function Home() {
             {/* Production: the script and everything that performs it. */}
             <div className="flex flex-col gap-5">
             {/* The material: the script itself. */}
-            <Panel title="Script" meta={lines.length > 0 ? `${lines.length} lines` : "or draft one in the writer's room"}>
+            <Panel anchor="script" title="Script" meta={lines.length > 0 ? `${lines.length} lines` : "or draft one in the writer's room"}>
               <textarea
                 id="script"
                 aria-label="Script"
@@ -1106,7 +1134,7 @@ export default function Home() {
             {/* Your voice: the creator loop's missing piece. Record a minute
                 once, and Cue's own local engine learns your voice — nothing
                 leaves this machine. */}
-            <Panel title="Your voice" meta="local · never uploaded">
+            <Panel anchor="voice" title="Your voice" meta="local · never uploaded">
                 <div className="flex flex-col gap-3">
                   <p className="max-w-[62ch] text-sm leading-relaxed text-ink-2">
                     Hate recording voiceovers? Record about a minute of yourself once, and
@@ -1188,7 +1216,7 @@ export default function Home() {
             </Panel>
 
             <div className="flex items-center gap-4">
-              <button onClick={handleDirect} disabled={directing || script.trim() === ""} className={BTN_PRIMARY}>
+              <button data-tour="direct" onClick={handleDirect} disabled={directing || script.trim() === ""} className={BTN_PRIMARY}>
                 {directing ? "Directing…" : "Direct"}
               </button>
               {directing && (
@@ -1490,6 +1518,9 @@ export default function Home() {
           }}
         />
       </div>
+
+      {/* The guided tour: spotlights the real controls in order. */}
+      <Tour open={tourOpen} onClose={closeTour} />
     </main>
   );
 }
