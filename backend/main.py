@@ -12,7 +12,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -316,6 +316,57 @@ def read(request: ReadRequest, x_elevenlabs_key: str = Header(default="")):
         # analyzes to draw the measured energy arc of the whole read.
         "clips": [{"audio_id": c["audio_id"], "ext": c["ext"]} for c in clips],
     }
+
+
+@app.post("/voice/clone")
+async def voice_clone(
+    name: str = Form(...),
+    consent: str = Form(...),
+    files: list[UploadFile] = File(...),
+    x_elevenlabs_key: str = Header(default=""),
+):
+    """Create a voice from the visitor's own recording, in THEIR ElevenLabs
+    account. Their key is required (cloning never touches the host's account),
+    and explicit consent is required — Cue only clones your own voice. The new
+    voice comes back through /voices like any other (category "cloned")."""
+    if not x_elevenlabs_key:
+        raise HTTPException(
+            status_code=400,
+            detail="your own ElevenLabs key is required to clone your voice",
+        )
+    if consent.lower() != "true":
+        raise HTTPException(
+            status_code=400,
+            detail="consent is required: the recording must be your own voice",
+        )
+    if not name.strip():
+        raise HTTPException(status_code=400, detail="a name for the voice is required")
+    if not files:
+        raise HTTPException(status_code=400, detail="a recording is required")
+
+    uploads = [
+        ("files", (f.filename or "recording.webm", await f.read(), f.content_type or "audio/webm"))
+        for f in files
+    ]
+    try:
+        response = httpx.post(
+            "https://api.elevenlabs.io/v1/voices/add",
+            headers={"xi-api-key": x_elevenlabs_key},
+            data={"name": name.strip(), "description": "Own voice, created with Cue"},
+            files=uploads,
+            timeout=60.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError:
+        # Wrong scope or free plan: instant voice cloning needs Starter. The
+        # detail never echoes the key or ElevenLabs' raw body.
+        raise HTTPException(
+            status_code=402,
+            detail="ElevenLabs refused the clone. Instant voice cloning needs their Starter plan (and a key allowed to create voices).",
+        )
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="couldn't reach ElevenLabs")
+    return {"voice_id": response.json().get("voice_id", "")}
 
 
 @app.post("/analyze")

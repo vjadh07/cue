@@ -105,6 +105,19 @@ calm to furious", play the read, and watch the measured bars climb to match
 the plan. When a take misses the note, the numbers say so, and you call for
 another one.
 
+## Your voice: cast yourself
+
+Plenty of creators skip voiceover entirely because they don't want to record
+themselves for every video. With Cue you record about a minute of natural
+talking once (or upload a recording), and Cue clones it through your own
+ElevenLabs account. From then on your voice is just another actor in the cast:
+it performs any script with the full direction system, and the finished track
+downloads with synced captions, ready for Reels, TikTok, or YouTube.
+
+Two hard rules: cloning requires your own API key (it happens in your account,
+never the host's, and needs ElevenLabs' Starter plan), and it requires an
+explicit consent checkbox: your own voice only.
+
 ## Table reads: bring a real screenplay
 
 Cue imports the Fountain format (the plain-text screenplay format Highland,

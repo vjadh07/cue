@@ -223,6 +223,23 @@ export default function Home() {
   const [includeAction, setIncludeAction] = useState(false);
   const [importNote, setImportNote] = useState("");
 
+  // Your voice: record (or upload) a sample, then clone it in the visitor's
+  // own ElevenLabs account. The sample never goes anywhere without consent.
+  const [recordingVoice, setRecordingVoice] = useState(false);
+  const [recordSecs, setRecordSecs] = useState(0);
+  const [voiceSample, setVoiceSample] = useState<{ blob: Blob; name: string } | null>(null);
+  const [voiceSampleUrl, setVoiceSampleUrl] = useState("");
+  const [cloneName, setCloneName] = useState("");
+  const [cloneConsent, setCloneConsent] = useState(false);
+  const [cloning, setCloning] = useState(false);
+  const [cloneNote, setCloneNote] = useState("");
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordChunksRef = useRef<Blob[]>([]);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const voiceFileRef = useRef<HTMLInputElement>(null);
+  // Bumped after a successful clone so the voice pickers reload with it.
+  const [voicesTick, setVoicesTick] = useState(0);
+
   // Which line is mid-render (waiting on /render) and which is playing. Only one
   // line plays at a time — we reuse a single <audio> element. Index -1 means the
   // stitched full read (not an individual line).
@@ -334,7 +351,7 @@ export default function Home() {
         /* leave the picker empty; renders just use the backend default */
       });
     }
-  }, [elKey]);
+  }, [elKey, voicesTick]);
 
   // The header every credit-spending call carries when a visitor key is set.
   const keyHeader: Record<string, string> = elKey ? { "X-ElevenLabs-Key": elKey } : {};
@@ -437,6 +454,92 @@ export default function Home() {
     } catch {
       /* best-effort */
     }
+  }
+
+  // --- Your voice: record a sample and clone it in the visitor's account ---
+
+  async function startVoiceRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recordChunksRef.current = [];
+      recorder.ondataavailable = (e) => recordChunksRef.current.push(e.data);
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(recordChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        setVoiceSample({ blob, name: "my-voice.webm" });
+        setVoiceSampleUrl((old) => {
+          if (old) URL.revokeObjectURL(old);
+          return URL.createObjectURL(blob);
+        });
+      };
+      recorderRef.current = recorder;
+      recorder.start();
+      setRecordingVoice(true);
+      setRecordSecs(0);
+      setCloneNote("");
+      recordTimerRef.current = setInterval(() => setRecordSecs((s) => s + 1), 1000);
+    } catch {
+      setErrorMessage("Microphone access was blocked. You can upload a recording instead.");
+    }
+  }
+
+  function stopVoiceRecording() {
+    recorderRef.current?.stop();
+    setRecordingVoice(false);
+    if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+  }
+
+  async function handleCloneVoice() {
+    if (!voiceSample || !cloneName.trim() || !cloneConsent || cloning) return;
+    setErrorMessage("");
+    setCloning(true);
+    try {
+      const form = new FormData();
+      form.append("name", cloneName.trim());
+      form.append("consent", "true");
+      form.append("files", voiceSample.blob, voiceSample.name);
+      // No Content-Type header: the browser sets the multipart boundary.
+      const response = await fetch(`${BACKEND_URL}/voice/clone`, {
+        method: "POST",
+        headers: { ...keyHeader },
+        body: form,
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.detail ?? `Backend responded with ${response.status}`);
+      }
+      setCloneNote(`“${cloneName.trim()}” is in your cast now. Pick it like any other voice.`);
+      setVoiceSample(null);
+      setVoiceSampleUrl((old) => {
+        if (old) URL.revokeObjectURL(old);
+        return "";
+      });
+      setCloneName("");
+      setCloneConsent(false);
+      setVoicesTick((t) => t + 1); // the pickers reload and include the clone
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? `Couldn't clone the voice: ${err.message}` : "Couldn't clone the voice."
+      );
+    } finally {
+      setCloning(false);
+    }
+  }
+
+  // A ready-made scene, so a first visit never starts at an empty box. Free
+  // until Direct is pressed.
+  function loadSampleScene() {
+    useDraft(
+      [
+        "NORA: You kept the letter.",
+        "ELI: I kept everything.",
+        "NORA: Then why did you never write back?",
+        "ELI: Because you moved on. And I didn't.",
+      ].join("\n")
+    );
+    setDirection("an old wound reopening, tender but tense");
+    setImportNote("");
   }
 
   // Import a real screenplay (.fountain): the backend parses it into Cue's
@@ -797,12 +900,44 @@ export default function Home() {
           </div>
         )}
 
-        <p className="mb-8 max-w-[62ch] text-sm leading-relaxed text-chalk">
+        <p className="mb-5 max-w-[62ch] text-sm leading-relaxed text-chalk">
           Paste a script, one line per row, and give a single direction in plain English.
           The brain reads the whole script and performs each line for where it sits in the
           arc. Prefix a line with a name (<span className="font-mono">ALICE:</span>) to make
           it a conversation and give each character their own voice.
         </p>
+
+        {/* Where you are in the session: the four stages of a read, with the
+            current one lit. Navigation for first-timers, a checklist for the rest. */}
+        {(() => {
+          const stage = readTrack ? 3 : lines.length > 0 ? 2 : script.trim() ? 1 : 0;
+          const steps: { label: string; hint: string }[] = [
+            { label: "write", hint: "draft in the writer's room, paste, or load the sample scene" },
+            { label: "direct", hint: "give one plain-English note and press Direct" },
+            { label: "cast & retake", hint: "assign voices, play lines, give notes for another take" },
+            { label: "produce", hint: "play the full read, then download the mp3 and subtitles" },
+          ];
+          return (
+            <div className="mb-8 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              {steps.map((step, i) => (
+                <span key={step.label} className="flex items-baseline gap-4 font-mono text-[11px] uppercase tracking-[0.12em]">
+                  <span
+                    className={
+                      i < stage ? "text-chalk/70" : i === stage ? "text-cue" : "text-ink-3"
+                    }
+                  >
+                    {i < stage ? "✓ " : ""}
+                    {String(i + 1).padStart(2, "0")} {step.label}
+                  </span>
+                  {i < steps.length - 1 && <span className="text-ink-3">·</span>}
+                </span>
+              ))}
+              <span className="basis-full font-mono text-[11px] text-ink-3 sm:basis-auto">
+                → {steps[stage].hint}
+              </span>
+            </div>
+          );
+        })()}
 
         <div className="relative">
           <CornerMarks />
@@ -911,6 +1046,11 @@ export default function Home() {
                   narrator reads action lines
                 </label>
                 {importNote && <span className="font-mono text-xs text-chalk">{importNote}</span>}
+                {!script.trim() && (
+                  <button onClick={loadSampleScene} className={BTN_QUIET + " px-3 py-1.5"}>
+                    Load a sample scene
+                  </button>
+                )}
               </div>
             </Panel>
 
@@ -951,6 +1091,98 @@ export default function Home() {
                 </Panel>
               )}
             </div>
+
+            {/* Your voice: the creator loop's missing piece. Record a minute,
+                clone it in YOUR ElevenLabs account, cast yourself. */}
+            <Panel title="Your voice" meta="clone it, cast it">
+              {!elKey ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="max-w-[52ch] text-sm leading-relaxed text-ink-2">
+                    Hate recording voiceovers? Record one minute of yourself once, and Cue
+                    can perform every script in your voice. Cloning happens in your own
+                    ElevenLabs account (their Starter plan), so add your key first.
+                  </p>
+                  <button
+                    onClick={() => setKeyPanelOpen(true)}
+                    className={BTN_QUIET + " px-3 py-1.5"}
+                  >
+                    Add your key
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    {recordingVoice ? (
+                      <button onClick={stopVoiceRecording} className={BTN_PRIMARY + " px-4 py-2"}>
+                        ■ Stop ({Math.floor(recordSecs / 60)}:{String(recordSecs % 60).padStart(2, "0")})
+                      </button>
+                    ) : (
+                      <button onClick={startVoiceRecording} className={BTN_QUIET + " px-3 py-1.5"}>
+                        ● Record your voice
+                      </button>
+                    )}
+                    <input
+                      ref={voiceFileRef}
+                      type="file"
+                      accept="audio/*"
+                      className="hidden"
+                      aria-label="Voice sample file"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setVoiceSample({ blob: file, name: file.name });
+                          setVoiceSampleUrl((old) => {
+                            if (old) URL.revokeObjectURL(old);
+                            return URL.createObjectURL(file);
+                          });
+                          setCloneNote("");
+                        }
+                        e.target.value = "";
+                      }}
+                    />
+                    <button
+                      onClick={() => voiceFileRef.current?.click()}
+                      className={BTN_QUIET + " px-3 py-1.5"}
+                    >
+                      or upload a recording
+                    </button>
+                    <span className="font-mono text-[10px] text-ink-3">
+                      about a minute of natural talking works best
+                    </span>
+                  </div>
+
+                  {voiceSample && (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <audio controls src={voiceSampleUrl} className="h-9 max-w-60" />
+                      <input
+                        aria-label="Name for your voice"
+                        value={cloneName}
+                        onChange={(e) => setCloneName(e.target.value)}
+                        placeholder="name it: My voice"
+                        className={FIELD + " max-w-44 py-1.5 text-sm"}
+                      />
+                      <label className="flex cursor-pointer items-center gap-1.5 font-mono text-xs text-ink-3">
+                        <input
+                          type="checkbox"
+                          checked={cloneConsent}
+                          onChange={(e) => setCloneConsent(e.target.checked)}
+                          className="accent-[var(--cue)]"
+                        />
+                        this is my own voice, and I consent to cloning it
+                      </label>
+                      <button
+                        onClick={handleCloneVoice}
+                        disabled={cloning || !cloneName.trim() || !cloneConsent}
+                        className={BTN_PRIMARY + " px-4 py-2"}
+                      >
+                        {cloning ? "Cloning…" : "Create my voice"}
+                      </button>
+                    </div>
+                  )}
+                  {cloneNote && <p className="font-mono text-xs text-cue">{cloneNote}</p>}
+                </div>
+              )}
+            </Panel>
 
             <div className="flex items-center gap-4">
               <button onClick={handleDirect} disabled={directing || script.trim() === ""} className={BTN_PRIMARY}>
