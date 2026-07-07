@@ -29,6 +29,48 @@ type DirectedLine = {
   brain: string;
 };
 
+// What the booth's ears measured off a rendered clip (shape /analyze returns).
+type Measured = {
+  loudness_db: number;
+  pitch_hz: number | null;
+  brightness_hz: number;
+  energy: number;
+  duration_ms: number;
+  words_per_sec: number | null;
+};
+
+// One take of a line: an interpretation, plus (once rendered and analyzed)
+// the clip it produced and what the booth heard in it. Take 1 comes from
+// Direct; later takes are retakes, each born from a director's note.
+type Take = {
+  settings: Settings;
+  tags: string[];
+  notes: string;
+  delivery: string | null;
+  brain: string;
+  note?: string; // the note that asked for this take (absent on take 1)
+  audioId?: string;
+  audioExt?: string;
+  measured?: Measured;
+};
+
+// A line on the workbench: what /direct returned, plus its take history.
+type LineState = DirectedLine & { takes: Take[]; active: number };
+
+function firstTake(line: DirectedLine): Take {
+  return {
+    settings: line.settings,
+    tags: line.tags,
+    notes: line.notes,
+    delivery: line.delivery,
+    brain: line.brain,
+  };
+}
+
+function takeOf(line: LineState): Take {
+  return line.takes[line.active];
+}
+
 // An ElevenLabs voice the picker can offer (shape /voices returns).
 type Voice = { id: string; name: string; description: string };
 
@@ -142,8 +184,13 @@ export default function Home() {
   const [chatLog, setChatLog] = useState<ChatTurn[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatting, setChatting] = useState(false);
-  const [lines, setLines] = useState<DirectedLine[]>([]);
+  const [lines, setLines] = useState<LineState[]>([]);
   const [directing, setDirecting] = useState(false);
+  // Which line has a retake being interpreted right now (its Retake button
+  // shows progress); null = none.
+  const [retakingLine, setRetakingLine] = useState<number | null>(null);
+  // The note drafts, one per line strip.
+  const [noteDrafts, setNoteDrafts] = useState<Record<number, string>>({});
   const [errorMessage, setErrorMessage] = useState("");
 
   // The actor: voices come from the backend (your ElevenLabs account), and
@@ -458,7 +505,8 @@ export default function Home() {
       });
       if (!response.ok) throw new Error(`Backend responded with ${response.status}`);
       const data: { lines: DirectedLine[]; speakers: string[] } = await response.json();
-      setLines(data.lines);
+      setLines(data.lines.map((line) => ({ ...line, takes: [firstTake(line)], active: 0 })));
+      setNoteDrafts({});
       // Seed any newly-seen speaker with the narrator voice, so every line has a
       // valid voice; the user can then reassign each character in the Cast panel.
       setCast((prev) => {
@@ -477,14 +525,82 @@ export default function Home() {
 
   // A labeled line uses its character's voice; an unlabeled line uses the
   // narrator voice.
-  function voiceFor(line: DirectedLine) {
+  function voiceFor(line: LineState) {
     return line.speaker ? cast[line.speaker] ?? voice : voice;
+  }
+
+  // Store a change into one take of one line, immutably.
+  function patchTake(lineIndex: number, takeIndex: number, patch: Partial<Take>) {
+    setLines((prev) =>
+      prev.map((line, i) =>
+        i === lineIndex
+          ? {
+              ...line,
+              takes: line.takes.map((t, k) => (k === takeIndex ? { ...t, ...patch } : t)),
+            }
+          : line
+      )
+    );
+  }
+
+  // The booth listens to a rendered clip (local DSP on the backend, free)
+  // and the measurements land on the take that produced it.
+  async function analyzeTake(lineIndex: number, takeIndex: number, audioId: string, ext: string) {
+    try {
+      const response = await fetch(`${BACKEND_URL}/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio_id: audioId, ext, text: lines[lineIndex]?.text ?? "" }),
+      });
+      if (!response.ok) return; // measurements are a bonus, never an error
+      const measured: Measured = await response.json();
+      patchTake(lineIndex, takeIndex, { measured, audioId, audioExt: ext });
+    } catch {
+      /* the booth stays quiet rather than breaking playback */
+    }
+  }
+
+  // A director's note against one line: the brain re-reads that line (with
+  // the whole script still in view) and the result lands as the next take.
+  async function handleRetake(i: number) {
+    const note = (noteDrafts[i] ?? "").trim();
+    if (!note || retakingLine !== null) return;
+    setErrorMessage("");
+    setRetakingLine(i);
+    try {
+      const response = await fetch(`${BACKEND_URL}/retake`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          script: lines.map((l) => l.text),
+          index: i,
+          direction,
+          note,
+        }),
+      });
+      if (!response.ok) throw new Error(`Backend responded with ${response.status}`);
+      const take: Take = { ...(await response.json()), note };
+      setLines((prev) =>
+        prev.map((line, k) =>
+          k === i ? { ...line, takes: [...line.takes, take], active: line.takes.length } : line
+        )
+      );
+      setNoteDrafts((prev) => ({ ...prev, [i]: "" }));
+      setReadTrack(null); // the stitched track no longer matches the kept takes
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? `Couldn't get a retake: ${err.message}` : "Couldn't get a retake."
+      );
+    } finally {
+      setRetakingLine(null);
+    }
   }
 
   // Play one line: render it with the settings/tags it already got from /direct,
   // then play. Reusing the same <audio> means a new Play interrupts the last.
   async function handlePlay(i: number) {
     const line = lines[i];
+    const take = takeOf(line);
     const lineVoice = voiceFor(line);
     setErrorMessage("");
     pendingLine.current = i;
@@ -496,19 +612,22 @@ export default function Home() {
         headers: { "Content-Type": "application/json", ...keyHeader },
         body: JSON.stringify({
           text: line.text,
-          settings: line.settings,
-          tags: line.tags,
+          settings: take.settings,
+          tags: take.tags,
           voice: lineVoice,
-          delivery: line.delivery ?? "",
+          delivery: take.delivery ?? "",
         }),
       });
       if (!response.ok) throw new Error(`Render failed (${response.status})`);
       const data = { audio_id: "", ext: "", ...(await response.json()) };
 
+      // The booth listens in the background while the clip plays.
+      analyzeTake(i, line.active, data.audio_id, data.ext);
+
       const audio = audioRef.current;
       if (!audio) throw new Error("Audio player not ready.");
       audio.src = `${BACKEND_URL}/audio/${data.audio_id}.${data.ext}`;
-      audio.volume = line.settings.volume;
+      audio.volume = take.settings.volume;
       await audio.play(); // onPlay flips this line to "playing"
     } catch (err) {
       setLoadingLine(null);
@@ -532,18 +651,25 @@ export default function Home() {
         body: JSON.stringify({
           lines: lines.map((line) => ({
             text: line.text,
-            settings: line.settings,
-            tags: line.tags,
+            settings: takeOf(line).settings,
+            tags: takeOf(line).tags,
             voice: voiceFor(line),
-            delivery: line.delivery ?? "",
+            delivery: takeOf(line).delivery ?? "",
             speaker: line.speaker ?? "",
           })),
           music,
         }),
       });
       if (!response.ok) throw new Error(`Stitch failed (${response.status})`);
-      const data: { audio_id: string; ext: string } = await response.json();
+      const data: { audio_id: string; ext: string; clips?: { audio_id: string; ext: string }[] } =
+        await response.json();
       setReadTrack(data.audio_id);
+
+      // The full read hands the booth every line's clip: the measured arc
+      // fills in for the whole scene at once.
+      (data.clips ?? []).forEach((clip, i) => {
+        if (lines[i]) analyzeTake(i, lines[i].active, clip.audio_id, clip.ext);
+      });
 
       const audio = audioRef.current;
       if (!audio) throw new Error("Audio player not ready.");
@@ -934,10 +1060,58 @@ export default function Home() {
               </Panel>
             )}
 
+            {/* The booth: the scene's emotional arc, planned vs measured.
+                Planned = the brain's intensity per line (1 - stability).
+                Measured = what the ears actually heard in the rendered clip.
+                If the direction said "build", both should climb. */}
+            {lines.length > 1 && (
+              <Panel title="Booth" meta="planned vs measured energy">
+                <div className="flex items-end gap-3 overflow-x-auto pb-1">
+                  {lines.map((line, i) => {
+                    const planned = 1 - takeOf(line).settings.stability;
+                    const measured = takeOf(line).measured?.energy;
+                    return (
+                      <div key={i} className="flex shrink-0 flex-col items-center gap-1.5">
+                        <div className="flex h-24 items-end gap-1">
+                          <span
+                            title={`planned intensity ${planned.toFixed(2)}`}
+                            className="w-3 rounded-sm border border-cue-deep/70 bg-transparent"
+                            style={{ height: `${Math.max(4, Math.round(planned * 100))}%` }}
+                          />
+                          <span
+                            title={
+                              measured !== undefined
+                                ? `measured energy ${measured.toFixed(2)}`
+                                : "not rendered yet"
+                            }
+                            className={
+                              "w-3 rounded-sm " + (measured !== undefined ? "bg-cue/85" : "bg-panel-2")
+                            }
+                            style={{
+                              height: `${measured !== undefined ? Math.max(4, Math.round(measured * 100)) : 4}%`,
+                            }}
+                          />
+                        </div>
+                        <span className="font-mono text-[9px] uppercase text-ink-3">
+                          L{String(i + 1).padStart(2, "0")}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  <p className="ml-2 max-w-[26ch] self-center font-mono text-[10px] leading-relaxed text-ink-3">
+                    <span className="text-cue">▯</span> what the brain planned ·{" "}
+                    <span className="text-cue">▮</span> what the ears heard. Play lines (or the
+                    full read) and the measured arc fills in.
+                  </p>
+                </div>
+              </Panel>
+            )}
+
             {/* The directed script: one strip per line, laid out on the mat. */}
             {lines.length > 0 && (
               <div className="flex flex-col gap-3">
                 {lines.map((line, i) => {
+                  const take = takeOf(line);
                   const isLoading = loadingLine === i;
                   const isPlaying = playingLine === i;
                   return (
@@ -949,22 +1123,44 @@ export default function Home() {
                       }
                     >
                       <header className="flex items-baseline justify-between gap-3 border-b border-edge px-3 py-1.5">
-                        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+                        <span className="flex items-baseline gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
                           L{String(i + 1).padStart(2, "0")}
-                          {line.speaker && <span className="text-cue"> · {line.speaker}</span>}
+                          {line.speaker && <span className="text-cue">· {line.speaker}</span>}
+                          {/* Take pills: the line's history in the booth. */}
+                          {line.takes.length > 1 &&
+                            line.takes.map((t, k) => (
+                              <button
+                                key={k}
+                                onClick={() => {
+                                  setLines((prev) =>
+                                    prev.map((l, li) => (li === i ? { ...l, active: k } : l))
+                                  );
+                                  setReadTrack(null); // the track no longer matches
+                                }}
+                                title={t.note ? `note: ${t.note}` : "the first read"}
+                                className={
+                                  "rounded-sm border px-1.5 py-0.5 font-mono text-[10px] transition-colors duration-150 " +
+                                  (line.active === k
+                                    ? "border-cue-deep bg-cue text-cue-ink"
+                                    : "border-edge text-ink-3 hover:border-cue-deep hover:text-cue")
+                                }
+                              >
+                                T{k + 1}
+                              </button>
+                            ))}
                         </span>
-                        {line.notes && (
-                          <span className="truncate font-mono text-[10px] text-ink-3">read as: {line.notes}</span>
+                        {take.notes && (
+                          <span className="truncate font-mono text-[10px] text-ink-3">read as: {take.notes}</span>
                         )}
                       </header>
 
                       <div className="flex items-start justify-between gap-4 p-3">
                         <div className="min-w-0 flex-col gap-2">
                           <p className="text-[15px] leading-relaxed text-ink">
-                            {line.delivery ? <Performance delivery={line.delivery} /> : line.text}
+                            {take.delivery ? <Performance delivery={take.delivery} /> : line.text}
                           </p>
                           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                            {line.tags.map((tag) => (
+                            {take.tags.map((tag) => (
                               <span
                                 key={tag}
                                 className="rounded-sm border border-cue-deep/60 bg-cue/10 px-1.5 py-0.5 font-mono text-[10px] text-cue"
@@ -973,18 +1169,55 @@ export default function Home() {
                               </span>
                             ))}
                             <span className="font-mono text-[10px] text-ink-3">
-                              {SETTING_KEYS.map(({ key, label }) => `${label} ${line.settings[key].toFixed(2)}`).join(
+                              {SETTING_KEYS.map(({ key, label }) => `${label} ${take.settings[key].toFixed(2)}`).join(
                                 "  ·  "
                               )}
                               {"  ·  "}
-                              {line.brain}
+                              {take.brain}
                             </span>
                           </div>
+                          {/* What the booth heard in this take's clip. */}
+                          {take.measured && (
+                            <div className="mt-1.5 flex items-center gap-2 font-mono text-[10px] text-ink-3">
+                              <span className="h-1.5 w-16 overflow-hidden rounded-sm bg-panel-2">
+                                <span
+                                  className="block h-full bg-cue/80"
+                                  style={{ width: `${Math.round(take.measured.energy * 100)}%` }}
+                                />
+                              </span>
+                              <span>
+                                heard: energy {take.measured.energy.toFixed(2)} · {take.measured.loudness_db.toFixed(1)} dB
+                                {take.measured.pitch_hz !== null && ` · ${Math.round(take.measured.pitch_hz)} Hz`}
+                                {take.measured.words_per_sec !== null && ` · ${take.measured.words_per_sec} w/s`}
+                              </span>
+                            </div>
+                          )}
                         </div>
                         <button onClick={() => handlePlay(i)} disabled={isLoading} className={BTN_QUIET + " shrink-0"}>
                           {isLoading ? "Rendering…" : isPlaying ? "Playing…" : "Play"}
                         </button>
                       </div>
+
+                      {/* The director's note: ask this line for another take. */}
+                      <footer className="flex items-center gap-2 border-t border-edge px-3 py-2">
+                        <input
+                          aria-label={`Note for line ${i + 1}`}
+                          value={noteDrafts[i] ?? ""}
+                          onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [i]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleRetake(i);
+                          }}
+                          placeholder="give a note: colder, more hurt, don't shout it"
+                          className={FIELD + " py-1.5 font-mono text-xs"}
+                        />
+                        <button
+                          onClick={() => handleRetake(i)}
+                          disabled={retakingLine !== null || !(noteDrafts[i] ?? "").trim()}
+                          className={BTN_QUIET + " shrink-0 px-3 py-1.5"}
+                        >
+                          {retakingLine === i ? "Reading…" : "Retake"}
+                        </button>
+                      </footer>
                     </article>
                   );
                 })}

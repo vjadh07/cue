@@ -26,6 +26,7 @@ from captions import srt, vtt
 from delivery import verify_delivery
 from engine import Engine
 from fountain import characters, parse_fountain, to_cue_script
+from listen import profile
 from music import INTRO_MS, MUSIC_DIR, list_music, underlay
 from providers import DEFAULT_VOICE_ID, ElevenLabsProvider, PiperProvider
 from script import parse_script, speakers
@@ -85,6 +86,24 @@ class FountainRequest(BaseModel):
     # read the action lines and scene headings, in the narrator's voice.
     text: str
     include_action: bool = False
+
+
+class AnalyzeRequest(BaseModel):
+    # A clip that was already rendered (its cache id + extension), plus the
+    # line's text so speech rate can be computed. Analysis is local DSP only.
+    audio_id: str
+    ext: str
+    text: str = ""
+
+
+class RetakeRequest(BaseModel):
+    # One line of the directed script, a director's note against the last
+    # take, and the whole script for arc context. Returns a fresh
+    # interpretation for that line only — the retake.
+    script: list[str]
+    index: int
+    direction: str = ""
+    note: str
 
 
 class ReadRequest(BaseModel):
@@ -287,7 +306,52 @@ def read(request: ReadRequest, x_elevenlabs_key: str = Header(default="")):
         cache.write(key, "srt", srt(cues).encode())
         cache.write(key, "vtt", vtt(cues).encode())
 
-    return {"audio_id": key, "ext": "mp3", "engine": "stitch", "cached": cached, "captions": True}
+    return {
+        "audio_id": key,
+        "ext": "mp3",
+        "engine": "stitch",
+        "cached": cached,
+        "captions": True,
+        # The per-line clips inside this track, in order — what the booth
+        # analyzes to draw the measured energy arc of the whole read.
+        "clips": [{"audio_id": c["audio_id"], "ext": c["ext"]} for c in clips],
+    }
+
+
+@app.post("/analyze")
+def analyze(request: AnalyzeRequest):
+    """The booth's ears: measure a rendered take — loudness, pitch,
+    brightness, energy, speech rate — with local DSP over the cached clip.
+    No credits, no network; the numbers are how Cue checks whether a
+    direction actually landed in the audio."""
+    filename = f"{request.audio_id}.{request.ext}"
+    if not SAFE_AUDIO_NAME.fullmatch(filename):
+        raise HTTPException(status_code=404, detail="not found")
+    if not cache.has(request.audio_id, request.ext):
+        raise HTTPException(status_code=404, detail="not found")
+
+    measured = profile(cache.read(request.audio_id, request.ext))
+    words = len(re.findall(r"[A-Za-z0-9']+", request.text))
+    seconds = measured["duration_ms"] / 1000
+    measured["words_per_sec"] = round(words / seconds, 2) if words and seconds > 0.2 else None
+    return measured
+
+
+@app.post("/retake")
+def retake(request: RetakeRequest):
+    """One line, one director's note, a new performance. The note is folded
+    into that line's direction only (same convention as screenplay
+    parentheticals), with the whole script still passed for arc context.
+    Returns the fresh interpretation; the client renders it as the next take."""
+    note = request.note.strip()
+    if not note:
+        raise HTTPException(status_code=400, detail="a note is required")
+    if not 0 <= request.index < len(request.script):
+        raise HTTPException(status_code=400, detail="index out of range")
+
+    line = request.script[request.index]
+    direction = f"{request.direction}. This line: {note}" if request.direction else f"This line: {note}"
+    return brain_engine.interpret(line, direction, script=request.script, index=request.index)
 
 
 @app.post("/import/fountain")

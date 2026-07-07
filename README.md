@@ -88,6 +88,23 @@ npm run dev          # http://localhost:3000
 
 The interactive API docs are at `http://localhost:8000/docs`.
 
+## The booth: retakes, and ears that check the take
+
+Directing is a loop, not a form. Every line on the workbench takes a
+director's note ("colder, more hurt, don't shout it"): the brain re-reads
+that one line with the whole script still in view, and the result lands as
+Take 2 next to Take 1. A/B them, keep the winner; the full read uses your
+kept takes.
+
+And Cue listens back. Every rendered clip is measured with hand-rolled DSP
+(pure numpy, no ML, no service): RMS loudness, fundamental pitch by
+autocorrelation, spectral brightness, speech rate. The Booth panel draws the
+scene's emotional arc twice: what the brain planned (per-line intensity) next
+to what the ears actually heard in the audio. Direct a scene to "build from
+calm to furious", play the read, and watch the measured bars climb to match
+the plan. When a take misses the note, the numbers say so, and you call for
+another one.
+
 ## Table reads: bring a real screenplay
 
 Cue imports the Fountain format (the plain-text screenplay format Highland,
