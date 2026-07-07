@@ -154,7 +154,10 @@ def test_read_endpoint_forwards_header_key_to_every_line(client, monkeypatch, tm
     assert engine.api_keys == ["visitor-key", "visitor-key"]
 
 
-def test_voices_endpoint_uses_header_key(client, monkeypatch):
+def test_voices_endpoint_uses_header_key(client, monkeypatch, tmp_path):
+    # Pin an empty clone registry so this test is about the ElevenLabs key,
+    # not whatever local voices happen to exist on this machine.
+    monkeypatch.setattr("clones.CLONES_DIR", tmp_path)
     seen = {}
 
     def fake_get(url, headers=None, timeout=None):

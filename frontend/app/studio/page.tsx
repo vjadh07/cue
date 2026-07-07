@@ -499,10 +499,10 @@ export default function Home() {
       form.append("name", cloneName.trim());
       form.append("consent", "true");
       form.append("files", voiceSample.blob, voiceSample.name);
-      // No Content-Type header: the browser sets the multipart boundary.
+      // No key, no headers: cloning is local. The browser sets the multipart
+      // boundary; the sample never leaves this machine.
       const response = await fetch(`${BACKEND_URL}/voice/clone`, {
         method: "POST",
-        headers: { ...keyHeader },
         body: form,
       });
       if (!response.ok) {
@@ -1092,25 +1092,18 @@ export default function Home() {
               )}
             </div>
 
-            {/* Your voice: the creator loop's missing piece. Record a minute,
-                clone it in YOUR ElevenLabs account, cast yourself. */}
-            <Panel title="Your voice" meta="clone it, cast it">
-              {!elKey ? (
-                <div className="flex flex-wrap items-center gap-3">
-                  <p className="max-w-[52ch] text-sm leading-relaxed text-ink-2">
-                    Hate recording voiceovers? Record one minute of yourself once, and Cue
-                    can perform every script in your voice. Cloning happens in your own
-                    ElevenLabs account (their Starter plan), so add your key first.
-                  </p>
-                  <button
-                    onClick={() => setKeyPanelOpen(true)}
-                    className={BTN_QUIET + " px-3 py-1.5"}
-                  >
-                    Add your key
-                  </button>
-                </div>
-              ) : (
+            {/* Your voice: the creator loop's missing piece. Record a minute
+                once, and Cue's own local engine learns your voice — nothing
+                leaves this machine. */}
+            <Panel title="Your voice" meta="local · never uploaded">
                 <div className="flex flex-col gap-3">
+                  <p className="max-w-[62ch] text-sm leading-relaxed text-ink-2">
+                    Hate recording voiceovers? Record about a minute of yourself once, and
+                    Cue&apos;s own voice engine learns how you sound and performs every script
+                    as you. It runs entirely on this machine: your voice sample and every
+                    generated clip stay here, and each clip carries an inaudible
+                    AI-generated watermark.
+                  </p>
                   <div className="flex flex-wrap items-center gap-3">
                     {recordingVoice ? (
                       <button onClick={stopVoiceRecording} className={BTN_PRIMARY + " px-4 py-2"}>
@@ -1181,7 +1174,6 @@ export default function Home() {
                   )}
                   {cloneNote && <p className="font-mono text-xs text-cue">{cloneNote}</p>}
                 </div>
-              )}
             </Panel>
 
             <div className="flex items-center gap-4">

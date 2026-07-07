@@ -5,6 +5,8 @@ httpx
 python-dotenv
 pydub
 python-multipart  # multipart uploads (the voice-clone recording)
+chatterbox-tts    # Cue's local voice engine: cloning + emotion, fully offline
+setuptools<81     # chatterbox's watermarker needs pkg_resources (removed in 81+)
 
 # pydub needs ffmpeg on the PATH to decode/encode mp3 (used for stitching the
 # full read). Install it with:

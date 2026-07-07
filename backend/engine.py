@@ -32,8 +32,16 @@ class Engine:
     ) -> dict:
         # api_key is whose account pays (bring-your-own-key); it never enters
         # the cache key — the same render is the same audio for everyone.
+        # Providers can declare which voices they speak (a local clone must
+        # never reach a cloud engine; a cloud voice never reaches the clone
+        # engine). No declaration means "any voice".
+        def handles(provider) -> bool:
+            return getattr(provider, "supports", lambda v: True)(voice)
+
         # 1. If any provider already has this exact render cached, reuse it.
         for provider in self.providers:
+            if not handles(provider):
+                continue
             key = self.cache.key(provider.name, settings, text, tags, voice, delivery)
             if self.cache.has(key, provider.ext):
                 return {
@@ -45,6 +53,8 @@ class Engine:
 
         # 2. Cache miss: try each provider (with one retry) until one succeeds.
         for provider in self.providers:
+            if not handles(provider):
+                continue
             audio = None
             for attempt in range(2):
                 try:

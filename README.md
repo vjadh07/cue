@@ -78,6 +78,11 @@ Both keys are optional; without them Cue falls back to the local Piper voice and
 the keyword/Ollama brain. See `backend/requirements.txt` for the one-time Piper
 voice download and the optional Ollama setup.
 
+The local voice engine (Chatterbox, see below) pulls in PyTorch, so use a
+native Python on Apple Silicon (an arm64 interpreter, not one running under
+Rosetta) or CPU inference is slow. Its model weights download on first clone
+render, not at install.
+
 **Frontend**
 
 ```bash
@@ -105,18 +110,33 @@ calm to furious", play the read, and watch the measured bars climb to match
 the plan. When a take misses the note, the numbers say so, and you call for
 another one.
 
-## Your voice: cast yourself
+## Your voice: cast yourself, entirely on your machine
 
-Plenty of creators skip voiceover entirely because they don't want to record
-themselves for every video. With Cue you record about a minute of natural
-talking once (or upload a recording), and Cue clones it through your own
-ElevenLabs account. From then on your voice is just another actor in the cast:
-it performs any script with the full direction system, and the finished track
+Plenty of creators skip voiceover because they don't want to record themselves
+for every video. So Cue ships its own local voice engine: record about a minute
+of natural talking once (or upload a recording), and Cue learns how you sound
+and performs every script as you. From then on your voice is just another actor
+in the cast, driven by the full direction system, and the finished track
 downloads with synced captions, ready for Reels, TikTok, or YouTube.
 
-Two hard rules: cloning requires your own API key (it happens in your account,
-never the host's, and needs ElevenLabs' Starter plan), and it requires an
-explicit consent checkbox: your own voice only.
+This is the part that isn't a wrapper around anyone. It runs on
+[Chatterbox](https://github.com/resemble-ai/chatterbox), an MIT-licensed
+open-weights TTS with zero-shot cloning and an emotion-intensity control, which
+Cue drives locally: your brain's per-line direction (stability, style) maps onto
+the model's expression knobs, so "build from calm to furious" builds in *your*
+voice. The privacy story is one no cloud service can make: **your voice sample
+and every generated clip never leave the computer.** Each clip also carries an
+inaudible Perth watermark marking it as AI-generated.
+
+The precise claim, for the curious: this is zero-shot cloning (the model
+conditions each syllable on your reference sample) rather than per-user
+retraining, which is why the clone is usable seconds after you stop recording.
+Emotion is real but coarser than a frontier cloud model; the trade is that it's
+yours, local, and free. One hard rule stays: an explicit consent checkbox, your
+own voice only.
+
+First render downloads the model weights (~2 GB) and warms up for ~30s; after
+that expect a few seconds per line on Apple Silicon (Metal/MPS).
 
 ## Table reads: bring a real screenplay
 

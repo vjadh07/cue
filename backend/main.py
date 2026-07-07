@@ -20,6 +20,7 @@ from pydantic import BaseModel
 # Load backend/.env (the ElevenLabs key) before creating the providers.
 load_dotenv(Path(__file__).parent / ".env")
 
+import clones
 from brains import BrainEngine, GroqBrain, KeywordBrain, OllamaBrain
 from cache import AudioCache
 from captions import srt, vtt
@@ -28,7 +29,7 @@ from engine import Engine
 from fountain import characters, parse_fountain, to_cue_script
 from listen import profile
 from music import INTRO_MS, MUSIC_DIR, list_music, underlay
-from providers import DEFAULT_VOICE_ID, ElevenLabsProvider, PiperProvider
+from providers import ChatterboxProvider, DEFAULT_VOICE_ID, ElevenLabsProvider, PiperProvider
 from script import parse_script, speakers
 from settings import clean, clean_tags
 from stitch import stitch, stitch_key, timeline
@@ -44,10 +45,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Voice: ElevenLabs first, Piper as the offline / out-of-quota fallback. The
-# cache wraps both so identical lines are never re-rendered.
+# Voice: ElevenLabs first for its voices, Cue's local clone engine for
+# `local:` voices (each declares what it supports), Piper as the offline /
+# out-of-quota fallback. The cache wraps all of them.
 cache = AudioCache(Path(__file__).parent / "audio_cache")
-voice_engine = Engine([ElevenLabsProvider(), PiperProvider()], cache)
+voice_engine = Engine([ElevenLabsProvider(), ChatterboxProvider(), PiperProvider()], cache)
 
 # Brain: Groq (fast cloud LLM) interprets the direction, falling back to local
 # Ollama if it's unavailable, then to the deterministic keyword matcher.
@@ -323,17 +325,11 @@ async def voice_clone(
     name: str = Form(...),
     consent: str = Form(...),
     files: list[UploadFile] = File(...),
-    x_elevenlabs_key: str = Header(default=""),
 ):
-    """Create a voice from the visitor's own recording, in THEIR ElevenLabs
-    account. Their key is required (cloning never touches the host's account),
-    and explicit consent is required — Cue only clones your own voice. The new
-    voice comes back through /voices like any other (category "cloned")."""
-    if not x_elevenlabs_key:
-        raise HTTPException(
-            status_code=400,
-            detail="your own ElevenLabs key is required to clone your voice",
-        )
+    """Create a voice from the user's own recording — entirely on this
+    machine. The sample is stored in the local clone registry and the voice
+    speaks through Cue's local engine; no API key, no cloud, nothing leaves
+    the computer. Explicit consent is required: your own voice only."""
     if consent.lower() != "true":
         raise HTTPException(
             status_code=400,
@@ -344,29 +340,12 @@ async def voice_clone(
     if not files:
         raise HTTPException(status_code=400, detail="a recording is required")
 
-    uploads = [
-        ("files", (f.filename or "recording.webm", await f.read(), f.content_type or "audio/webm"))
-        for f in files
-    ]
+    audio = await files[0].read()
     try:
-        response = httpx.post(
-            "https://api.elevenlabs.io/v1/voices/add",
-            headers={"xi-api-key": x_elevenlabs_key},
-            data={"name": name.strip(), "description": "Own voice, created with Cue"},
-            files=uploads,
-            timeout=60.0,
-        )
-        response.raise_for_status()
-    except httpx.HTTPStatusError:
-        # Wrong scope or free plan: instant voice cloning needs Starter. The
-        # detail never echoes the key or ElevenLabs' raw body.
-        raise HTTPException(
-            status_code=402,
-            detail="ElevenLabs refused the clone. Instant voice cloning needs their Starter plan (and a key allowed to create voices).",
-        )
-    except httpx.HTTPError:
-        raise HTTPException(status_code=502, detail="couldn't reach ElevenLabs")
-    return {"voice_id": response.json().get("voice_id", "")}
+        entry = clones.add_clone(name.strip(), audio)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="couldn't read that audio; try a different recording")
+    return {"voice_id": f"local:{entry['id']}", "engine": "cue-local"}
 
 
 @app.post("/analyze")
@@ -440,6 +419,16 @@ def voices(x_elevenlabs_key: str = Header(default="")):
     Without an explicit key it falls back to a small curated list whenever
     ElevenLabs can't be reached, so the dropdown is never empty."""
     default = os.environ.get("ELEVENLABS_VOICE_ID", DEFAULT_VOICE_ID)
+    # The user's own local clones lead the list — they never depend on any
+    # cloud being reachable.
+    local = [
+        {
+            "id": f"local:{c['id']}",
+            "name": f"{c['name']} · your voice",
+            "description": "cloned locally; never leaves this machine",
+        }
+        for c in clones.list_clones()
+    ]
     key = x_elevenlabs_key or os.environ.get("ELEVENLABS_API_KEY", "")
     if key:
         try:
@@ -454,13 +443,13 @@ def voices(x_elevenlabs_key: str = Header(default="")):
             # to the wrong voice.
             mapped = usable_voices(response.json().get("voices", []))
             if mapped:
-                return {"voices": mapped, "default": default}
+                return {"voices": local + mapped, "default": default}
         except Exception:
             # A key the visitor explicitly supplied deserves a real answer,
             # not a silent fallback — this is how the studio validates it.
             if x_elevenlabs_key:
                 raise HTTPException(status_code=401, detail="ElevenLabs rejected this key")
-    return {"voices": FALLBACK_VOICES, "default": default}
+    return {"voices": local + FALLBACK_VOICES, "default": default}
 
 
 SAFE_CAPTION_NAME = re.compile(r"[a-f0-9]{64}\.(srt|vtt)")

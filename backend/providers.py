@@ -10,11 +10,14 @@ lets the Engine try one and fall back to another.
 
 import io
 import os
+import re
 import wave
 from pathlib import Path
 
 import httpx
 from piper import PiperVoice, SynthesisConfig
+
+import clones
 
 # The downloaded Piper voice lives here (git-ignored — see .gitignore).
 VOICES_DIR = Path(__file__).parent / "voices"
@@ -39,6 +42,10 @@ class ElevenLabsProvider:
         self.api_key = os.environ.get("ELEVENLABS_API_KEY", "")
         self.voice_id = os.environ.get("ELEVENLABS_VOICE_ID", DEFAULT_VOICE_ID)
         self.model = os.environ.get("ELEVENLABS_MODEL", DEFAULT_MODEL)
+
+    def supports(self, voice: str) -> bool:
+        # Local clones never leave the machine — the cloud never sees them.
+        return not voice.startswith("local:")
 
     def synthesize(
         self,
@@ -95,6 +102,94 @@ class ElevenLabsProvider:
         return response.content
 
 
+# A [tag] would be read out loud by the local engines; the delivery's
+# expressive punctuation and CAPS still carry the performance.
+_TAG_IN_DELIVERY_RE = re.compile(r"\[[^\]]+\]\s*")
+
+
+def strip_tags(delivery: str) -> str:
+    return re.sub(r"\s+", " ", _TAG_IN_DELIVERY_RE.sub("", delivery)).strip()
+
+
+def expression_controls(settings: dict) -> dict:
+    """Map Cue's per-line direction onto the local engine's knobs.
+
+    The brain speaks in stability (low = raw, unhinged) and style (high =
+    stylized, dramatic). Chatterbox speaks in exaggeration (emotion intensity,
+    ~0.3 flat .. ~1.3 wild) and cfg_weight (adherence/pace, higher = steadier).
+    """
+    return {
+        "exaggeration": round(0.3 + settings["style"] * 0.9, 3),
+        "cfg_weight": round(0.25 + settings["stability"] * 0.45, 3),
+    }
+
+
+class ChatterboxProvider:
+    """Cue's own local voice engine: zero-shot voice cloning with emotion
+    control, running entirely on this machine (MIT-licensed Chatterbox
+    weights). Speaks only `local:` voices — the clones in the registry. The
+    user's voice sample and every generated clip never leave the computer."""
+
+    name = "chatterbox"
+    content_type = "audio/wav"
+    ext = "wav"
+
+    def __init__(self) -> None:
+        # The model is heavy (~2GB of weights), so it loads lazily on the
+        # first clone render and is reused after that.
+        self._model = None
+
+    def supports(self, voice: str) -> bool:
+        return voice.startswith("local:")
+
+    def _get_model(self):
+        if self._model is None:
+            import torch
+            from chatterbox.tts import ChatterboxTTS
+
+            device = "mps" if torch.backends.mps.is_available() else "cpu"
+            try:
+                self._model = ChatterboxTTS.from_pretrained(device=device)
+            except Exception:
+                if device == "cpu":
+                    raise
+                self._model = ChatterboxTTS.from_pretrained(device="cpu")
+        return self._model
+
+    def synthesize(
+        self,
+        text: str,
+        settings: dict,
+        tags: list,
+        voice: str = "",
+        delivery: str = "",
+        api_key: str = "",
+    ) -> bytes:
+        if not voice.startswith("local:"):
+            raise RuntimeError("chatterbox speaks only local clone voices")
+        sample = clones.clone_path(voice[len("local:") :])
+        if sample is None:
+            raise RuntimeError("unknown clone voice")
+
+        # The delivery's punctuation and CAPS carry the emotion; inline [tags]
+        # would be read aloud, so they're stripped.
+        spoken = strip_tags(delivery) if delivery else text
+        controls = expression_controls(settings)
+
+        import torchaudio
+
+        model = self._get_model()
+        wav = model.generate(
+            spoken,
+            audio_prompt_path=str(sample),
+            exaggeration=controls["exaggeration"],
+            cfg_weight=controls["cfg_weight"],
+        )
+        out = io.BytesIO()
+        torchaudio.save(out, wav, model.sr, format="wav")
+        return out.getvalue()
+
+
 class PiperProvider:
     """Local neural TTS. Free, offline, no quota."""
 
@@ -105,6 +200,11 @@ class PiperProvider:
     def __init__(self) -> None:
         # The model is ~60MB, so load it once and reuse it, not per request.
         self._voice: PiperVoice | None = None
+
+    def supports(self, voice: str) -> bool:
+        # Piper can't speak a clone: falling back to its generic voice would
+        # put someone else's voice on the user's words. Fail loudly instead.
+        return not voice.startswith("local:")
 
     def _get_voice(self) -> PiperVoice:
         if self._voice is None:

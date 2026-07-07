@@ -130,6 +130,47 @@ def test_render_passes_voice_to_provider(tmp_path):
     assert el.last_voice == "george"
 
 
+def test_engine_skips_providers_that_dont_support_the_voice(tmp_path):
+    """A local clone voice (local:...) must never be sent to a cloud provider,
+    and a cloud voice must never be sent to the local clone engine."""
+
+    class PickyProvider(FakeProvider):
+        def __init__(self, name, ext, prefix):
+            super().__init__(name, ext)
+            self.prefix = prefix
+
+        def supports(self, voice):
+            return voice.startswith(self.prefix)
+
+    cloud = PickyProvider("elevenlabs", "mp3", prefix="")  # everything BUT local
+    cloud.supports = lambda voice: not voice.startswith("local:")
+    local = PickyProvider("chatterbox", "wav", prefix="local:")
+    engine = Engine([cloud, local], AudioCache(tmp_path))
+
+    result = engine.render("hello", S, [], voice="local:abc123")
+    assert result["engine"] == "chatterbox"
+    assert cloud.calls == 0
+
+    result = engine.render("hello", S, [], voice="JBFqn")
+    assert result["engine"] == "elevenlabs"
+    assert local.calls == 1  # only the local render above
+
+
+def test_engine_errors_when_no_provider_supports_the_voice(tmp_path):
+    """A clone voice with no local engine must fail loudly — falling back to
+    a generic voice would put someone else's voice on the user's words."""
+    cloud = FakeProvider("elevenlabs", "mp3")
+    cloud.supports = lambda voice: not voice.startswith("local:")
+    engine = Engine([cloud], AudioCache(tmp_path))
+
+    try:
+        engine.render("hello", S, [], voice="local:abc123")
+        assert False, "expected RuntimeError"
+    except RuntimeError:
+        pass
+    assert cloud.calls == 0
+
+
 def test_different_voice_is_a_different_render(tmp_path):
     # Same line/settings/tags but a different voice must not reuse the cache.
     cache = AudioCache(tmp_path)
