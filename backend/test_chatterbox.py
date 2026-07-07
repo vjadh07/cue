@@ -29,10 +29,18 @@ def test_direction_maps_onto_expression_knobs():
 
     assert wild["exaggeration"] > calm["exaggeration"]
     assert wild["cfg_weight"] < calm["cfg_weight"]
-    # Everything stays inside the engine's sensible operating range.
+    # Both knobs stay in the identity-safe band: high exaggeration makes the
+    # clone sound generically expressive instead of like the actual person, so
+    # protecting likeness caps the range far below the model's max.
     for knobs in (wild, calm):
-        assert 0.2 <= knobs["exaggeration"] <= 1.3
-        assert 0.2 <= knobs["cfg_weight"] <= 0.75
+        assert 0.3 <= knobs["exaggeration"] <= 0.75
+        assert 0.3 <= knobs["cfg_weight"] <= 0.6
+
+
+def test_even_the_most_dramatic_direction_protects_likeness():
+    loudest = expression_controls({"stability": 0.0, "style": 1.0, "speed": 1.0, "volume": 1.0})
+    # Never past ~0.75 — beyond that the voice stops sounding like the user.
+    assert loudest["exaggeration"] <= 0.75
 
 
 def test_unknown_clone_fails_loudly(tmp_path, monkeypatch):

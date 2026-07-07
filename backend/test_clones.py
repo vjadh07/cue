@@ -1,8 +1,16 @@
 """Tests for the local clone registry — where a user's voice lives when Cue
 clones it: on THEIR disk, as a wav + an index entry, never anywhere else."""
 
+import io
+
+from pydub import AudioSegment
+
 import clones
 from test_listen import tone_wav
+
+
+def _measure(path):
+    return AudioSegment.from_file(path)
 
 
 def test_add_clone_stores_wav_and_registers_it(tmp_path):
@@ -38,6 +46,36 @@ def test_undecodable_audio_is_rejected(tmp_path):
         assert False, "expected a ValueError for garbage audio"
     except ValueError:
         pass
+
+
+def test_stored_sample_is_mono(tmp_path):
+    """A stereo browser recording is folded to mono — the voice encoder wants
+    one channel, and a clean mono reference clones better."""
+    stereo = AudioSegment.from_file(io.BytesIO(tone_wav(220))).set_channels(2)
+    entry = clones.add_clone("Me", stereo.export(format="wav").read(), clones_dir=tmp_path)
+    assert _measure(clones.clone_path(entry["id"], clones_dir=tmp_path)).channels == 1
+
+
+def test_leading_and_trailing_silence_is_trimmed(tmp_path):
+    """Dead air and breaths at the ends dilute the reference; they're trimmed."""
+    padded = (
+        AudioSegment.silent(duration=500)
+        + AudioSegment.from_file(io.BytesIO(tone_wav(220, seconds=0.5)))
+        + AudioSegment.silent(duration=500)
+    )
+    entry = clones.add_clone("Me", padded.export(format="wav").read(), clones_dir=tmp_path)
+    stored = _measure(clones.clone_path(entry["id"], clones_dir=tmp_path))
+    # 1500ms in, ~500ms of real speech out (with a little slack).
+    assert len(stored) < 900
+
+
+def test_quiet_recording_is_normalized_louder(tmp_path):
+    """A quietly-recorded sample is brought up to a consistent level so the
+    encoder hears it clearly."""
+    quiet = clones.add_clone("Me", tone_wav(220, amplitude=0.03), clones_dir=tmp_path)
+    stored = _measure(clones.clone_path(quiet["id"], clones_dir=tmp_path))
+    original = AudioSegment.from_file(io.BytesIO(tone_wav(220, amplitude=0.03)))
+    assert stored.dBFS > original.dBFS + 6
 
 
 def test_unknown_clone_has_no_path(tmp_path):

@@ -115,12 +115,18 @@ def expression_controls(settings: dict) -> dict:
     """Map Cue's per-line direction onto the local engine's knobs.
 
     The brain speaks in stability (low = raw, unhinged) and style (high =
-    stylized, dramatic). Chatterbox speaks in exaggeration (emotion intensity,
-    ~0.3 flat .. ~1.3 wild) and cfg_weight (adherence/pace, higher = steadier).
+    stylized, dramatic). Chatterbox speaks in exaggeration (emotion intensity)
+    and cfg_weight (adherence/pace, higher = steadier).
+
+    Identity comes first: Chatterbox's exaggeration can go past 1.0, but high
+    values make a clone sound generically expressive instead of like the actual
+    person (and speed/destabilize the read). So style only ever nudges
+    exaggeration across a narrow identity-safe band (0.35 .. 0.70) around the
+    model's 0.5 default; cfg_weight tracks stability across a moderate band.
     """
     return {
-        "exaggeration": round(0.3 + settings["style"] * 0.9, 3),
-        "cfg_weight": round(0.25 + settings["stability"] * 0.45, 3),
+        "exaggeration": round(0.35 + settings["style"] * 0.35, 3),
+        "cfg_weight": round(0.3 + settings["stability"] * 0.3, 3),
     }
 
 

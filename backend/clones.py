@@ -13,9 +13,28 @@ import io
 import json
 from pathlib import Path
 
-from pydub import AudioSegment
+from pydub import AudioSegment, effects
+from pydub.silence import detect_leading_silence
 
 CLONES_DIR = Path(__file__).parent / "clones"
+
+# The reference the voice engine conditions on clones better when it's clean:
+# one channel, a standard rate, no dead air at the ends, and a consistent
+# level. Browser recordings are none of these by default.
+TARGET_RATE = 24000
+SILENCE_DBFS = -40  # quieter than this at the ends counts as trimmable silence
+
+
+def _preprocess(segment: AudioSegment) -> AudioSegment:
+    """Clean a raw recording into a good voice-clone reference."""
+    segment = segment.set_channels(1).set_frame_rate(TARGET_RATE)
+    lead = detect_leading_silence(segment, silence_threshold=SILENCE_DBFS)
+    trail = detect_leading_silence(segment.reverse(), silence_threshold=SILENCE_DBFS)
+    # Only trim if real speech is left — never trim a sample down to nothing.
+    if lead + trail < len(segment):
+        segment = segment[lead : len(segment) - trail]
+    # Peak-normalize to a consistent level so the encoder hears it clearly.
+    return effects.normalize(segment, headroom=1.0)
 
 
 def _index_path(clones_dir: Path) -> Path:
@@ -43,6 +62,7 @@ def add_clone(name: str, audio_bytes: bytes, clones_dir: Path | None = None) -> 
     except Exception as err:
         raise ValueError("could not decode the audio sample") from err
 
+    segment = _preprocess(segment)
     clone_id = hashlib.sha256(name.encode() + audio_bytes).hexdigest()[:16]
     out = io.BytesIO()
     segment.export(out, format="wav")

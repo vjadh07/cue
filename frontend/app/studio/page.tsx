@@ -1151,7 +1151,7 @@ export default function Home() {
                       or upload a recording
                     </button>
                     <span className="font-mono text-[10px] text-ink-3">
-                      about a minute of natural talking works best
+                      ~30s of natural talking, quiet room, close to the mic
                     </span>
                   </div>
 
