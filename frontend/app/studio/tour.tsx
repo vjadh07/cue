@@ -2,9 +2,15 @@
 // each with a short "what to do here" card. Shown once on a first visit and
 // reopenable any time from the header. Anchors target live elements by a
 // `data-tour` attribute (or id), so the tour tracks the actual layout.
+//
+// Movement is driven by a single requestAnimationFrame loop that eases the
+// spotlight toward its target every frame (writing styles straight to the DOM,
+// no per-frame React renders). So the spotlight *rides* the scroll to the next
+// control and glides between steps, instead of snapping, waiting on a timer,
+// then snapping again.
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type Step = { sel?: string; title: string; body: string };
 
@@ -48,128 +54,158 @@ const STEPS: Step[] = [
 ];
 
 const PAD = 8; // breathing room around the highlighted element
+const EASE = 0.22; // per-frame glide toward the target (1 = instant)
+
+type Box = { top: number; left: number; width: number; height: number };
 
 export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [i, setI] = useState(0);
-  const [rect, setRect] = useState<DOMRect | null>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; centered: boolean }>({
-    top: 0,
-    left: 0,
-    centered: true,
-  });
-  const cardRef = useRef<HTMLDivElement>(null);
 
-  const step = STEPS[i];
+  const spotRef = useRef<HTMLDivElement>(null);
+  const dimRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const cur = useRef<Box | null>(null); // the eased position, animated each frame
+  const iRef = useRef(0);
+
   const last = i === STEPS.length - 1;
+  const step = STEPS[i];
+
+  useEffect(() => {
+    iRef.current = i;
+  }, [i]);
 
   const finish = useCallback(() => {
     setI(0);
     onClose();
   }, [onClose]);
 
+  const go = useCallback((next: number) => {
+    setI(Math.max(0, Math.min(STEPS.length - 1, next)));
+  }, []);
+
   // Reset to the first step whenever the tour is (re)opened.
   useEffect(() => {
-    if (open) setI(0);
+    if (open) {
+      setI(0);
+      cur.current = null;
+    }
   }, [open]);
 
-  // Point the spotlight at the current step's element, scrolling it into view.
-  useEffect(() => {
-    if (!open) return;
-    if (!step.sel) {
-      setRect(null);
-      return;
-    }
-    const el = document.querySelector(step.sel);
-    if (!el) {
-      setRect(null);
-      return;
-    }
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
-    const measure = () => setRect(el.getBoundingClientRect());
-    measure();
-    const t = window.setTimeout(measure, 280); // settle after the smooth scroll
-    return () => window.clearTimeout(t);
-  }, [open, i, step.sel]);
-
-  // Keep the spotlight glued to its element as the page scrolls or resizes.
+  // On each step, scroll its element to the middle of the screen; the rAF loop
+  // below then follows it there in real time.
   useEffect(() => {
     if (!open || !step.sel) return;
-    const track = () => {
-      const el = document.querySelector(step.sel!);
-      if (el) setRect(el.getBoundingClientRect());
-    };
-    window.addEventListener("resize", track);
-    window.addEventListener("scroll", track, true);
-    return () => {
-      window.removeEventListener("resize", track);
-      window.removeEventListener("scroll", track, true);
-    };
+    const el = document.querySelector(step.sel);
+    if (!el) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
   }, [open, i, step.sel]);
 
-  // Place the card: below the element if it fits, otherwise above; centered
-  // for the anchor-less overview steps.
-  useLayoutEffect(() => {
+  // The animation loop: one rAF while the tour is open. It reads the current
+  // step (via a ref, so it never goes stale) and eases the spotlight and card
+  // toward the live element every frame.
+  useEffect(() => {
     if (!open) return;
-    const card = cardRef.current;
-    const cw = card?.offsetWidth ?? 340;
-    const ch = card?.offsetHeight ?? 170;
-    if (!rect) {
-      setPos({
-        top: window.innerHeight / 2 - ch / 2,
-        left: window.innerWidth / 2 - cw / 2,
-        centered: true,
-      });
-      return;
-    }
-    const gap = 14;
-    const fitsBelow = rect.bottom + gap + ch <= window.innerHeight - 12;
-    const top = fitsBelow ? rect.bottom + gap : Math.max(12, rect.top - gap - ch);
-    const left = Math.min(Math.max(12, rect.left), window.innerWidth - cw - 12);
-    setPos({ top, left, centered: false });
-  }, [open, rect, i]);
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const ease = reduce ? 1 : EASE;
+    let raf = 0;
 
-  // Keyboard: arrows navigate, Escape leaves.
+    const frame = () => {
+      raf = requestAnimationFrame(frame);
+      const card = cardRef.current;
+      const spot = spotRef.current;
+      const dim = dimRef.current;
+      if (!card) return;
+
+      const active = STEPS[iRef.current];
+      const el = active.sel ? document.querySelector(active.sel) : null;
+      const cw = card.offsetWidth;
+      const ch = card.offsetHeight;
+
+      if (!el) {
+        // Anchor-less overview step: full dim, centered card, no spotlight.
+        if (spot) spot.style.opacity = "0";
+        if (dim) dim.style.opacity = "1";
+        card.style.top = `${Math.round(window.innerHeight / 2 - ch / 2)}px`;
+        card.style.left = `${Math.round(window.innerWidth / 2 - cw / 2)}px`;
+        card.style.opacity = "1";
+        cur.current = null; // so the next anchored step eases in from itself
+        return;
+      }
+
+      const r = el.getBoundingClientRect();
+      const target: Box = { top: r.top, left: r.left, width: r.width, height: r.height };
+      if (!cur.current) {
+        cur.current = { ...target }; // first anchored frame: snap, don't glide from afar
+      } else {
+        cur.current.top += (target.top - cur.current.top) * ease;
+        cur.current.left += (target.left - cur.current.left) * ease;
+        cur.current.width += (target.width - cur.current.width) * ease;
+        cur.current.height += (target.height - cur.current.height) * ease;
+      }
+      const c = cur.current;
+
+      if (spot) {
+        spot.style.opacity = "1";
+        spot.style.top = `${c.top - PAD}px`;
+        spot.style.left = `${c.left - PAD}px`;
+        spot.style.width = `${c.width + PAD * 2}px`;
+        spot.style.height = `${c.height + PAD * 2}px`;
+      }
+      if (dim) dim.style.opacity = "0"; // the spotlight's box-shadow does the dimming
+
+      // Card sits below the element if it fits, otherwise above; clamped to the
+      // viewport. Positioned from the eased box so it glides along too.
+      const gap = 14;
+      const fitsBelow = c.top + c.height + gap + ch <= window.innerHeight - 12;
+      const top = fitsBelow ? c.top + c.height + gap : Math.max(12, c.top - gap - ch);
+      const left = Math.min(Math.max(12, c.left), window.innerWidth - cw - 12);
+      card.style.top = `${Math.round(top)}px`;
+      card.style.left = `${Math.round(left)}px`;
+      card.style.opacity = "1";
+    };
+
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [open]);
+
+  // Keyboard: arrows navigate, Enter advances, Escape leaves.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") finish();
-      else if (e.key === "ArrowRight" || e.key === "Enter") setI((n) => Math.min(STEPS.length - 1, n + 1));
-      else if (e.key === "ArrowLeft") setI((n) => Math.max(0, n - 1));
+      else if (e.key === "ArrowRight" || e.key === "Enter") go(iRef.current + 1);
+      else if (e.key === "ArrowLeft") go(iRef.current - 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, finish]);
+  }, [open, finish, go]);
 
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-[200]" role="dialog" aria-modal="true" aria-label="Studio tour">
-      {/* Dimmer + spotlight. The giant box-shadow darkens everything except
-          the highlighted element; a full dim covers the anchor-less steps. */}
-      {rect ? (
-        <div
-          className="pointer-events-none fixed rounded-md ring-2 ring-cue transition-all duration-200"
-          style={{
-            top: rect.top - PAD,
-            left: rect.left - PAD,
-            width: rect.width + PAD * 2,
-            height: rect.height + PAD * 2,
-            boxShadow: "0 0 0 9999px rgba(0,0,0,0.66)",
-          }}
-        />
-      ) : (
-        <div className="fixed inset-0 bg-black/66" />
-      )}
+      {/* Full-screen dim for centered steps; also the click-blocker so the
+          studio underneath can't be used mid-tour. Only opacity transitions —
+          the rAF loop owns position, so it must not animate. */}
+      <div
+        ref={dimRef}
+        className="fixed inset-0 bg-black/[0.66] transition-opacity duration-200"
+        style={{ opacity: 0 }}
+      />
 
-      {/* Catch clicks so the underlying studio can't be used mid-tour. */}
-      <div className="fixed inset-0" onClick={() => {}} />
+      {/* The spotlight: a giant box-shadow darkens everything but this box. */}
+      <div
+        ref={spotRef}
+        className="pointer-events-none fixed rounded-md ring-2 ring-cue transition-opacity duration-200"
+        style={{ boxShadow: "0 0 0 9999px rgba(0,0,0,0.66)", opacity: 0 }}
+      />
 
       {/* The step card. */}
       <div
         ref={cardRef}
         className="fixed z-[201] w-[min(340px,calc(100vw-24px))] rounded border border-cue-deep bg-panel p-4 shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
-        style={{ top: pos.top, left: pos.left }}
+        style={{ top: 0, left: 0, opacity: 0 }}
       >
         <div className="flex items-baseline justify-between gap-3">
           <h3 className="text-sm font-semibold text-ink">{step.title}</h3>
@@ -189,14 +225,14 @@ export function Tour({ open, onClose }: { open: boolean; onClose: () => void }) 
           <div className="flex items-center gap-2">
             {i > 0 && (
               <button
-                onClick={() => setI((n) => Math.max(0, n - 1))}
+                onClick={() => go(i - 1)}
                 className="rounded border border-edge px-3 py-1.5 font-mono text-xs text-ink-2 transition-colors hover:border-edge-strong"
               >
                 Back
               </button>
             )}
             <button
-              onClick={() => (last ? finish() : setI((n) => n + 1))}
+              onClick={() => (last ? finish() : go(i + 1))}
               className="rounded border border-cue-deep bg-cue px-3 py-1.5 text-xs font-semibold text-cue-ink transition-colors hover:bg-cue-bright"
             >
               {last ? "Start creating" : "Next"}
