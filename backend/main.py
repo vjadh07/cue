@@ -37,10 +37,21 @@ from voices import usable_voices
 
 app = FastAPI()
 
+
+def cors_origins() -> list[str]:
+    """Origins allowed to call this backend from a browser. Comma-separated
+    CUE_CORS_ORIGINS in the environment, defaulting to the local frontend so
+    dev needs no config. In production set it to your real frontend domain —
+    never "*", so only your own site can call the backend with a visitor's key.
+    """
+    raw = os.environ.get("CUE_CORS_ORIGINS", "http://localhost:3000")
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
 # Allow the frontend (a different address) to call this backend.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=cors_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )

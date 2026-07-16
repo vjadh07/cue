@@ -182,4 +182,9 @@ the browser to ElevenLabs without it ever touching this server.
 - ElevenLabs' free tier gives 10,000 credits per month and blocks shared *library*
   voices via the API, so the voice picker only lists voices the free tier can
   actually render.
+- Deploying beyond localhost: point the frontend at the backend with
+  `NEXT_PUBLIC_BACKEND_URL`, and allow its origin on the backend with
+  `CUE_CORS_ORIGINS` (comma-separated, your real domain, never `*`). Both
+  default to localhost, so dev needs no config. Serve it over HTTPS: a
+  visitor's key rides a request header and is only as private as the transport.
 - Built in steps, each one working before the next; see `CueBuildPlan.md`.

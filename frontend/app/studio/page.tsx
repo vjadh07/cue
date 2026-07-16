@@ -9,7 +9,9 @@ import { MAT_CLOUD } from "../mat-art";
 import { Tour } from "./tour";
 
 // Where the Python backend is listening. For now this is hard-coded.
-const BACKEND_URL = "http://localhost:8000";
+// Where the backend lives. Defaults to the local dev server; set
+// NEXT_PUBLIC_BACKEND_URL to your deployed backend for production.
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
 
 // The voice dials the brain produces. stability/style/speed shape the
 // ElevenLabs performance; volume is applied here at playback.
