@@ -359,6 +359,23 @@ async def voice_clone(
     return {"voice_id": f"local:{entry['id']}", "engine": "cue-local"}
 
 
+# A clone id is 16 hex chars; accept it bare or with the "local:" voice prefix.
+SAFE_CLONE_ID = re.compile(r"(?:local:)?([a-f0-9]{16})$")
+
+
+@app.delete("/voice/clone/{clone_id}")
+def delete_voice_clone(clone_id: str):
+    """Forget a locally-cloned voice: delete its sample and registry entry from
+    this machine. The id must look like our own (16 hex, optionally 'local:'
+    prefixed) so nothing path-ish ever reaches the filesystem."""
+    match = SAFE_CLONE_ID.fullmatch(clone_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="not found")
+    if not clones.delete_clone(match.group(1)):
+        raise HTTPException(status_code=404, detail="not found")
+    return {"deleted": f"local:{match.group(1)}"}
+
+
 @app.post("/analyze")
 def analyze(request: AnalyzeRequest):
     """The booth's ears: measure a rendered take — loudness, pitch,

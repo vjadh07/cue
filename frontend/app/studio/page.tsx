@@ -571,6 +571,35 @@ export default function Home() {
     }
   }
 
+  // Forget a locally-cloned voice: delete it on the backend, drop any
+  // selection pointing at it (narrator or cast), and reload the pickers.
+  async function handleDeleteClone(voiceId: string, voiceName: string) {
+    if (!window.confirm(`Delete “${voiceName}”? This removes the voice from this machine.`)) return;
+    setErrorMessage("");
+    try {
+      const response = await fetch(`${BACKEND_URL}/voice/clone/${encodeURIComponent(voiceId)}`, {
+        method: "DELETE",
+      });
+      if (!response.ok && response.status !== 404) {
+        throw new Error(`Backend responded with ${response.status}`);
+      }
+      // A deleted voice must not stay selected anywhere, or a render would 500.
+      setVoice((prev) => (prev === voiceId ? "" : prev));
+      setCast((prev) => {
+        const next: Record<string, string> = {};
+        for (const [speaker, v] of Object.entries(prev)) next[speaker] = v === voiceId ? "" : v;
+        return next;
+      });
+      setReadTrack(null);
+      setCloneNote("");
+      setVoicesTick((t) => t + 1); // reload the pickers without the deleted voice
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? `Couldn't delete the voice: ${err.message}` : "Couldn't delete the voice."
+      );
+    }
+  }
+
   // A ready-made scene, so a first visit never starts at an empty box. Free
   // until Direct is pressed.
   function loadSampleScene() {
@@ -1156,6 +1185,33 @@ export default function Home() {
                     generated clip stay here, and each clip carries an inaudible
                     AI-generated watermark.
                   </p>
+
+                  {/* Voices you've already cloned, with a way to forget each. */}
+                  {voices.some((v) => isLocalVoice(v.id)) && (
+                    <div className="flex flex-col gap-1.5 rounded border border-edge bg-panel-2 p-2.5">
+                      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+                        Your saved voices
+                      </span>
+                      {voices
+                        .filter((v) => isLocalVoice(v.id))
+                        .map((v) => {
+                          const label = v.name.replace(/\s*·.*$/, "");
+                          return (
+                            <div key={v.id} className="flex items-center justify-between gap-3">
+                              <span className="truncate text-sm text-ink-2">{label}</span>
+                              <button
+                                onClick={() => handleDeleteClone(v.id, label)}
+                                aria-label={`Delete ${label}`}
+                                className="shrink-0 rounded border border-edge px-2 py-0.5 font-mono text-[11px] text-ink-3 transition-colors hover:border-danger hover:text-danger"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap items-center gap-3">
                     {recordingVoice ? (
                       <button onClick={stopVoiceRecording} className={BTN_PRIMARY + " px-4 py-2"}>

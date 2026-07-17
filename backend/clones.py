@@ -83,3 +83,16 @@ def clone_path(clone_id: str, clones_dir: Path | None = None) -> Path | None:
     """The stored sample for one clone, or None if it doesn't exist."""
     path = Path(clones_dir or CLONES_DIR) / f"{clone_id}.wav"
     return path if path.exists() else None
+
+
+def delete_clone(clone_id: str, clones_dir: Path | None = None) -> bool:
+    """Forget a voice: remove its sample file and its index entry. Returns True
+    if the clone existed, False if there was nothing to delete."""
+    directory = Path(clones_dir or CLONES_DIR)
+    index = _read_index(directory)
+    remaining = [entry for entry in index if entry["id"] != clone_id]
+    if len(remaining) == len(index):
+        return False  # no such clone
+    (directory / f"{clone_id}.wav").unlink(missing_ok=True)
+    _index_path(directory).write_text(json.dumps(remaining, indent=2))
+    return True

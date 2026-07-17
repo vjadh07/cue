@@ -78,6 +78,23 @@ def test_quiet_recording_is_normalized_louder(tmp_path):
     assert stored.dBFS > original.dBFS + 6
 
 
+def test_delete_removes_the_wav_and_the_index_entry(tmp_path):
+    keep = clones.add_clone("Keep me", tone_wav(220), clones_dir=tmp_path)
+    drop = clones.add_clone("Drop me", tone_wav(330), clones_dir=tmp_path)
+
+    assert clones.delete_clone(drop["id"], clones_dir=tmp_path) is True
+
+    # The dropped voice's file and registry entry are both gone...
+    assert clones.clone_path(drop["id"], clones_dir=tmp_path) is None
+    assert [c["id"] for c in clones.list_clones(clones_dir=tmp_path)] == [keep["id"]]
+    # ...and the other voice is untouched.
+    assert clones.clone_path(keep["id"], clones_dir=tmp_path) is not None
+
+
+def test_deleting_an_unknown_clone_reports_false(tmp_path):
+    assert clones.delete_clone("feedfeedfeedfeed", clones_dir=tmp_path) is False
+
+
 def test_unknown_clone_has_no_path(tmp_path):
     assert clones.clone_path("feedfeedfeedfeed", clones_dir=tmp_path) is None
 

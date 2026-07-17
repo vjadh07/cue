@@ -58,6 +58,37 @@ def test_undecodable_audio_is_a_clear_400(tmp_path, monkeypatch):
     assert post_clone(audio=b"not audio").status_code == 400
 
 
+def test_delete_endpoint_removes_a_clone(tmp_path, monkeypatch):
+    monkeypatch.setattr(clones, "CLONES_DIR", tmp_path)
+    entry = clones.add_clone("My voice", tone_wav(220), clones_dir=tmp_path)
+
+    response = client().delete(f"/voice/clone/local:{entry['id']}")
+
+    assert response.status_code == 200
+    assert clones.list_clones(clones_dir=tmp_path) == []
+
+
+def test_delete_endpoint_accepts_the_bare_id_too(tmp_path, monkeypatch):
+    monkeypatch.setattr(clones, "CLONES_DIR", tmp_path)
+    entry = clones.add_clone("My voice", tone_wav(220), clones_dir=tmp_path)
+
+    response = client().delete(f"/voice/clone/{entry['id']}")
+
+    assert response.status_code == 200
+    assert clones.list_clones(clones_dir=tmp_path) == []
+
+
+def test_delete_endpoint_404s_on_unknown_clone(tmp_path, monkeypatch):
+    monkeypatch.setattr(clones, "CLONES_DIR", tmp_path)
+    assert client().delete("/voice/clone/feedfeedfeedfeed").status_code == 404
+
+
+def test_delete_endpoint_rejects_a_malformed_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(clones, "CLONES_DIR", tmp_path)
+    # Never let a path-ish id reach the filesystem.
+    assert client().delete("/voice/clone/..%2f..%2fmain").status_code in (404, 422)
+
+
 def test_voices_lists_local_clones_first(tmp_path, monkeypatch):
     monkeypatch.setattr(clones, "CLONES_DIR", tmp_path)
     entry = clones.add_clone("My voice", tone_wav(220), clones_dir=tmp_path)
