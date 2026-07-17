@@ -111,6 +111,11 @@ def strip_tags(delivery: str) -> str:
     return re.sub(r"\s+", " ", _TAG_IN_DELIVERY_RE.sub("", delivery)).strip()
 
 
+# Sampling temperature for the local clone. Lower than the model's 0.8 default
+# so generation stays faithful to the reference voice (identity over variety).
+CLONE_TEMPERATURE = 0.65
+
+
 def expression_controls(settings: dict) -> dict:
     """Map Cue's per-line direction onto the local engine's knobs.
 
@@ -190,6 +195,10 @@ class ChatterboxProvider:
             audio_prompt_path=str(sample),
             exaggeration=controls["exaggeration"],
             cfg_weight=controls["cfg_weight"],
+            # Below the model's 0.8 default: lower sampling temperature makes the
+            # voice hew closer to the reference, trading a little variation for
+            # identity — the right trade when the goal is "sound like me".
+            temperature=CLONE_TEMPERATURE,
         )
         out = io.BytesIO()
         torchaudio.save(out, wav, model.sr, format="wav")

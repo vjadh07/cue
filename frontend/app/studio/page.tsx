@@ -493,8 +493,19 @@ export default function Home() {
 
   async function startVoiceRecording() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      // Capture your ACTUAL voice, not the browser's call-optimized version.
+      // Echo cancellation, noise suppression, and auto-gain are on by default
+      // and alter your timbre — great for video calls, bad for a voice clone.
+      // Off, plus a high bitrate, gives the model a faithful reference.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1,
+        },
+      });
+      const recorder = new MediaRecorder(stream, { audioBitsPerSecond: 256000 });
       recordChunksRef.current = [];
       recorder.ondataavailable = (e) => recordChunksRef.current.push(e.data);
       recorder.onstop = () => {
@@ -1181,7 +1192,8 @@ export default function Home() {
                       or upload a recording
                     </button>
                     <span className="font-mono text-[10px] text-ink-3">
-                      ~30s of natural talking, quiet room, close to the mic
+                      ~30s of natural talking. A quiet room matters: Cue captures
+                      your raw voice, so background noise isn&apos;t filtered out.
                     </span>
                   </div>
 
