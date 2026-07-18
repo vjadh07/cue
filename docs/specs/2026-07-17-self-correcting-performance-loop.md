@@ -60,9 +60,9 @@ Per line, with `max_takes = 3` and `tolerance = 0.25` (request-overridable):
 2. Take 2 (re-roll): same markup, fresh render (see cache salt below).
    Judge. Pass -> keep, stop.
    - Futility guard: if the re-roll moved |delta| by < 0.03 AND the best
-     |delta| is still > 2x tolerance, the engine can't get there (e.g. Piper
-     has no emotion controls). Keep best, mark `engine_limited`, stop —
-     don't spend the third take.
+     |delta| is still > 1.5x tolerance, the engine can't get there (e.g.
+     Piper has no emotion controls). Keep best, mark `engine_limited`,
+     stop — don't spend the third take.
 3. Take 3 (re-direct): brain rewrites delivery/settings given the hint;
    render, judge.
 4. Keep the best take overall = smallest |delta| (a passed take short-
