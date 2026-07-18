@@ -27,7 +27,10 @@ from captions import srt, vtt
 from delivery import verify_delivery
 from engine import Engine
 from fountain import characters, parse_fountain, to_cue_script
+from judge import TOLERANCE as JUDGE_TOLERANCE
 from listen import profile
+import perform as perform_module
+from perform import arc_correlation, perform_line
 from music import INTRO_MS, MUSIC_DIR, list_music, underlay
 from providers import ChatterboxProvider, DEFAULT_VOICE_ID, ElevenLabsProvider, PiperProvider
 from script import parse_script, speakers
@@ -252,6 +255,49 @@ def chat(request: ChatRequest):
         raise HTTPException(status_code=503, detail="no brain available to write")
 
 
+def produce_track(
+    clips: list[dict],
+    volumes: list[float],
+    cue_speakers: list,
+    cue_texts: list[str],
+    requested_music: str,
+) -> dict:
+    """The shared back half of /read and /perform: stitch rendered clips into
+    one cached mp3 (music bed optional) with SRT/VTT caption sidecars."""
+    # The music id must be one we actually offer — never a client-supplied path.
+    music = requested_music if any(t["id"] == requested_music for t in list_music()) else ""
+
+    key = stitch_key([c["audio_id"] for c in clips], volumes=volumes, music=music)
+    paths = [cache.path(c["audio_id"], c["ext"]) for c in clips]
+    cached = cache.has(key, "mp3")
+    segments = None
+    if not cached:
+        track, segments = stitch(paths, volumes=volumes)
+        if music:
+            track = underlay(track, MUSIC_DIR / music)
+        cache.write(key, "mp3", track)
+
+    # Captions ride along for free: the stitcher's timeline says exactly when
+    # each line plays (shifted by the intro when a music bed opens the track).
+    if not cache.has(key, "srt"):
+        if segments is None:
+            segments = timeline(paths)  # backfill for a pre-captions track
+        offset = INTRO_MS if music else 0
+        cues = [
+            {
+                "start_ms": segment["start_ms"] + offset,
+                "end_ms": segment["end_ms"] + offset,
+                "speaker": speaker,
+                "text": text,
+            }
+            for segment, speaker, text in zip(segments, cue_speakers, cue_texts)
+        ]
+        cache.write(key, "srt", srt(cues).encode())
+        cache.write(key, "vtt", vtt(cues).encode())
+
+    return {"audio_id": key, "ext": "mp3", "engine": "stitch", "cached": cached, "captions": True}
+
+
 @app.post("/read")
 def read(request: ReadRequest, x_elevenlabs_key: str = Header(default="")):
     """Step 5: perform the whole script as ONE continuous track. Renders every
@@ -288,46 +334,133 @@ def read(request: ReadRequest, x_elevenlabs_key: str = Header(default="")):
     if not clips:
         raise HTTPException(status_code=400, detail="lines are required")
 
-    # The music id must be one we actually offer — never a client-supplied path.
-    music = request.music if any(t["id"] == request.music for t in list_music()) else ""
-
-    key = stitch_key([c["audio_id"] for c in clips], volumes=volumes, music=music)
-    paths = [cache.path(c["audio_id"], c["ext"]) for c in clips]
-    cached = cache.has(key, "mp3")
-    segments = None
-    if not cached:
-        track, segments = stitch(paths, volumes=volumes)
-        if music:
-            track = underlay(track, MUSIC_DIR / music)
-        cache.write(key, "mp3", track)
-
-    # Captions ride along for free: the stitcher's timeline says exactly when
-    # each line plays (shifted by the intro when a music bed opens the track).
-    if not cache.has(key, "srt"):
-        if segments is None:
-            segments = timeline(paths)  # backfill for a pre-captions track
-        offset = INTRO_MS if music else 0
-        cues = [
-            {
-                "start_ms": segment["start_ms"] + offset,
-                "end_ms": segment["end_ms"] + offset,
-                "speaker": speaker,
-                "text": text,
-            }
-            for segment, speaker, text in zip(segments, cue_speakers, cue_texts)
-        ]
-        cache.write(key, "srt", srt(cues).encode())
-        cache.write(key, "vtt", vtt(cues).encode())
-
+    produced = produce_track(clips, volumes, cue_speakers, cue_texts, request.music)
     return {
-        "audio_id": key,
-        "ext": "mp3",
-        "engine": "stitch",
-        "cached": cached,
-        "captions": True,
+        **produced,
         # The per-line clips inside this track, in order — what the booth
         # analyzes to draw the measured energy arc of the whole read.
         "clips": [{"audio_id": c["audio_id"], "ext": c["ext"]} for c in clips],
+    }
+
+
+class PerformRequest(BaseModel):
+    # The whole self-correcting read: script + one direction in, one produced
+    # track + a per-take report out. See docs/specs/2026-07-17.
+    script: str
+    direction: str = ""
+    voice: str = ""  # the narrator voice
+    cast: dict[str, str] = {}  # speaker name -> voice_id
+    music: str = ""
+    max_takes: int = perform_module.MAX_TAKES
+    tolerance: float = JUDGE_TOLERANCE
+
+
+@app.post("/perform")
+def perform(request: PerformRequest, x_elevenlabs_key: str = Header(default="")):
+    """The self-correcting read: plan the performance, render it, LISTEN to
+    every line with the booth's DSP, and re-take the ones that missed the
+    emotional target — a cheap re-roll first, then a re-direct where the brain
+    rewrites the delivery knowing exactly how the take missed. Always ships
+    the best take per line, with an honest per-take report. This is /direct +
+    /read + /analyze + /retake wired into one director's loop."""
+    parsed = parse_script(request.script)
+    if not parsed:
+        raise HTTPException(status_code=400, detail="script is required")
+    max_takes = max(1, min(perform_module.MAX_TAKES, request.max_takes))
+    tolerance = max(0.05, min(0.9, request.tolerance))
+
+    texts = [line["text"] for line in parsed]
+    hints = [line["hint"] for line in parsed]
+    interpretations = brain_engine.interpret_script(texts, request.direction, hints=hints)
+
+    def plan_of(result: dict, text: str) -> dict:
+        return {
+            "settings": clean(result["settings"]),
+            "tags": clean_tags(result["tags"]),
+            "delivery": verify_delivery(text, result.get("delivery") or "") or "",
+        }
+
+    report_lines = []
+    kept_clips = []
+    kept_volumes = []
+    cue_speakers = []
+    cue_texts = []
+    total_renders = 0
+
+    for index, (line, interpretation) in enumerate(zip(parsed, interpretations)):
+        text = line["text"]
+        line_voice = request.cast.get(line["speaker"], "") if line["speaker"] else ""
+        line_voice = line_voice or request.voice
+        plans_used: list[dict] = []  # per render, so the kept take's volume is known
+
+        def render_take(plan: dict, take: int) -> dict:
+            plans_used.append(plan)
+            return voice_engine.render(
+                text,
+                plan["settings"],
+                plan["tags"],
+                line_voice,
+                plan["delivery"],
+                api_key=x_elevenlabs_key,
+                take=take,
+            )
+
+        def measure_take(audio_id: str, ext: str) -> float:
+            return profile(cache.read(audio_id, ext))["energy"]
+
+        def redirect_with(hint: str) -> dict:
+            note = (
+                f"{request.direction}. This line: {hint}" if request.direction else f"This line: {hint}"
+            )
+            result = brain_engine.interpret(text, note, script=texts, index=index)
+            return plan_of(result, text)
+
+        try:
+            outcome = perform_line(
+                text=text,
+                plan=plan_of(interpretation, text),
+                render=render_take,
+                measure=measure_take,
+                redirect=redirect_with,
+                max_takes=max_takes,
+                tolerance=tolerance,
+            )
+        except RuntimeError:
+            # The FIRST take couldn't render at all — same rule as /read, and
+            # generic on purpose (a visitor's key rides this request).
+            raise HTTPException(status_code=503, detail="no voice engine available")
+
+        total_renders += len(outcome["takes"])
+        kept = outcome["takes"][outcome["kept"]]
+        kept_clips.append({"audio_id": kept["audio_id"], "ext": kept["ext"]})
+        kept_volumes.append(plans_used[outcome["kept"]]["settings"]["volume"])
+        cue_speakers.append(line["speaker"])
+        cue_texts.append(text)
+        report_lines.append(
+            {
+                "text": text,
+                "speaker": line["speaker"],
+                "target": outcome["target"],
+                "passed": outcome["passed"],
+                "engine_limited": outcome["engine_limited"],
+                "kept_take": outcome["kept"] + 1,
+                "takes": outcome["takes"],
+            }
+        )
+
+    produced = produce_track(kept_clips, kept_volumes, cue_speakers, cue_texts, request.music)
+    return {
+        **produced,
+        "report": {
+            "total_lines": len(report_lines),
+            "passed_lines": sum(1 for line in report_lines if line["passed"]),
+            "total_renders": total_renders,
+            "arc_correlation": arc_correlation(
+                [line["target"] for line in report_lines],
+                [line["takes"][line["kept_take"] - 1]["score"]["measured"] for line in report_lines],
+            ),
+            "lines": report_lines,
+        },
     }
 
 
