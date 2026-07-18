@@ -21,6 +21,29 @@ def test_target_is_clamped_to_the_unit_range():
     assert planned_intensity({**S, "stability": 1.7}) == 0.0
 
 
+# --- calibrate: raw booth energy -> the target's 0..1 scale ---
+# TTS output is loudness-normalized, so ALL speech measures ~0.45..0.8 raw;
+# emotion lives inside that band. Calibration stretches it to the unit range
+# the targets speak. Anchors come from live measurements: a calm read ~0.54
+# raw must read low, a shouted take ~0.71 raw must read hot.
+
+
+def test_calibration_stretches_the_speech_band():
+    from judge import calibrate
+
+    assert calibrate(0.45) == 0.0
+    assert calibrate(0.8) == 1.0
+    assert calibrate(0.54) < 0.3  # live calm read -> low
+    assert calibrate(0.71) > 0.7  # live shouted take -> hot
+
+
+def test_calibration_clamps_outside_the_band():
+    from judge import calibrate
+
+    assert calibrate(0.1) == 0.0
+    assert calibrate(0.95) == 1.0
+
+
 # --- judge_take: did the take land? ---
 
 

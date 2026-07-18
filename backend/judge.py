@@ -15,6 +15,19 @@ primitive: audio in (via listen.profile), verdict out.
 # well inside 0.25; a flat read against a hot target misses by ~0.5.
 TOLERANCE = 0.25
 
+# Raw booth energy compresses all speech into a narrow band — every TTS
+# normalizes loudness, so emotion moves the number only within ~0.45..0.8
+# (live anchors: a calm read measured ~0.54, a shouted take ~0.71). The
+# targets speak full 0..1, so the judge stretches the speech band onto it.
+SPEECH_FLOOR = 0.45
+SPEECH_CEIL = 0.8
+
+
+def calibrate(raw_energy: float) -> float:
+    """Map raw booth energy onto the target's 0..1 scale."""
+    scaled = (raw_energy - SPEECH_FLOOR) / (SPEECH_CEIL - SPEECH_FLOOR)
+    return round(min(1.0, max(0.0, scaled)), 3)
+
 
 def planned_intensity(settings: dict) -> float:
     """The emotional intensity a plan implies, 0..1. Matches the shipped

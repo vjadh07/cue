@@ -28,6 +28,7 @@ from delivery import verify_delivery
 from engine import Engine
 from fountain import characters, parse_fountain, to_cue_script
 from judge import TOLERANCE as JUDGE_TOLERANCE
+from judge import calibrate as judge_calibrate
 from listen import profile
 import perform as perform_module
 from perform import arc_correlation, perform_line
@@ -406,7 +407,9 @@ def perform(request: PerformRequest, x_elevenlabs_key: str = Header(default=""))
             )
 
         def measure_take(audio_id: str, ext: str) -> float:
-            return profile(cache.read(audio_id, ext))["energy"]
+            # Raw booth energy is loudness-compressed; calibrate stretches the
+            # speech band onto the target's 0..1 scale (see judge.py).
+            return judge_calibrate(profile(cache.read(audio_id, ext))["energy"])
 
         def redirect_with(hint: str) -> dict:
             note = (
