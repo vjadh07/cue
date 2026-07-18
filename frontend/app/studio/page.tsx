@@ -42,6 +42,37 @@ type Measured = {
   words_per_sec: number | null;
 };
 
+// One judged take from the self-directing loop (shape /perform returns):
+// which attempt it was, what the plan aimed for, what the ears heard.
+type ReportTake = {
+  take: number; // 1-based
+  action: "plan" | "reroll" | "redirect";
+  audio_id: string;
+  ext: string;
+  score: { target: number; measured: number; delta: number; passed: boolean; hint: string | null };
+};
+
+// One line's account in the loop's report: the target it was directed to,
+// every take tried, and which one shipped.
+type ReportLine = {
+  text: string;
+  speaker: string;
+  target: number;
+  passed: boolean;
+  engine_limited: boolean;
+  kept_take: number; // 1-based index into takes
+  takes: ReportTake[];
+};
+
+// The whole self-directed read, honestly accounted.
+type PerformReport = {
+  total_lines: number;
+  passed_lines: number;
+  total_renders: number;
+  arc_correlation: number | null;
+  lines: ReportLine[];
+};
+
 // One take of a line: an interpretation, plus (once rendered and analyzed)
 // the clip it produced and what the booth heard in it. Take 1 comes from
 // Direct; later takes are retakes, each born from a director's note.
@@ -268,6 +299,10 @@ export default function Home() {
   // changes, because the track no longer matches what's on screen.
   const [readTrack, setReadTrack] = useState<string | null>(null);
   const [stitching, setStitching] = useState(false);
+  // The self-directing loop: when on, the full read goes through /perform,
+  // where Cue listens to every take and retries the lines that miss.
+  const [selfDirect, setSelfDirect] = useState(false);
+  const [performReport, setPerformReport] = useState<PerformReport | null>(null);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   // The line we're about to play, so onPlay knows which one started without
@@ -658,6 +693,7 @@ export default function Home() {
     // A new script invalidates the old read: clear the directed lines/track.
     setLines([]);
     setReadTrack(null);
+    setPerformReport(null);
     setPlayingLine(null);
     setLoadingLine(null);
   }
@@ -672,6 +708,7 @@ export default function Home() {
     setPlayingLine(null);
     setLoadingLine(null);
     setReadTrack(null);
+    setPerformReport(null);
 
     try {
       const response = await fetch(`${BACKEND_URL}/direct`, {
@@ -844,6 +881,7 @@ export default function Home() {
       const data: { audio_id: string; ext: string; clips?: { audio_id: string; ext: string }[] } =
         await response.json();
       setReadTrack(data.audio_id);
+      setPerformReport(null); // this track is a plain read; the old report doesn't describe it
       if (lines.some((l) => isLocalVoice(voiceFor(l)))) setLocalWarm(true);
 
       // The full read hands the booth every line's clip: the measured arc
@@ -864,6 +902,60 @@ export default function Home() {
     } finally {
       setStitching(false);
     }
+  }
+
+  // The self-directing read: /perform re-plans the scene from the direction,
+  // renders every line, listens with the booth's ears, and retries lines that
+  // miss the target (a fresh roll first, then a re-direct born from the miss).
+  // Back comes the stitched best takes plus an honest per-take report.
+  async function handlePerform() {
+    setErrorMessage("");
+    setStitching(true);
+    pendingLine.current = -1; // the full read, not an individual line
+
+    try {
+      const script = lines
+        .map((line) => (line.speaker ? `${line.speaker}: ${line.text}` : line.text))
+        .join("\n");
+      const response = await fetch(`${BACKEND_URL}/perform`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...keyHeader },
+        body: JSON.stringify({ script, direction, voice, cast, music }),
+      });
+      if (!response.ok) throw new Error(`Perform failed (${response.status})`);
+      const data: { audio_id: string; ext: string; report: PerformReport } = await response.json();
+      setReadTrack(data.audio_id);
+      setPerformReport(data.report);
+      if (lines.some((l) => isLocalVoice(voiceFor(l)))) setLocalWarm(true);
+
+      // The kept takes feed the booth too, so the measured arc fills in.
+      data.report.lines.forEach((line, i) => {
+        const kept = line.takes[line.kept_take - 1];
+        if (kept && lines[i]) analyzeTake(i, lines[i].active, kept.audio_id, kept.ext);
+      });
+
+      const audio = audioRef.current;
+      if (!audio) throw new Error("Audio player not ready.");
+      audio.src = `${BACKEND_URL}/audio/${data.audio_id}.${data.ext}`;
+      audio.volume = 1.0;
+      await audio.play();
+    } catch (err) {
+      setErrorMessage(
+        err instanceof Error ? `Couldn't perform the read: ${err.message}` : "Couldn't perform the read."
+      );
+    } finally {
+      setStitching(false);
+    }
+  }
+
+  // Hear one take from the report: the loop's audition tape, clip by clip.
+  function playTakeClip(take: ReportTake) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    pendingLine.current = -2; // a report clip: the meter dances, no line lights up
+    audio.src = `${BACKEND_URL}/audio/${take.audio_id}.${take.ext}`;
+    audio.volume = 1.0;
+    audio.play().catch(() => setErrorMessage("Couldn't play that take."));
   }
 
   const anyPlaying = playingLine !== null;
@@ -1337,14 +1429,32 @@ export default function Home() {
             {lines.length > 0 && (
               <Panel title="Take" meta="one track · mp3">
                 <div className="flex flex-wrap items-center gap-3">
-                  <button onClick={handleRead} disabled={stitching} className={BTN_PRIMARY}>
+                  <button
+                    onClick={selfDirect ? handlePerform : handleRead}
+                    disabled={stitching}
+                    className={BTN_PRIMARY}
+                  >
                     {stitching
                       ? lines.some((l) => isLocalVoice(voiceFor(l))) && !localWarm
                         ? "Warming up… (~30s)"
-                        : "Stitching…"
+                        : selfDirect
+                          ? "Directing takes…"
+                          : "Stitching…"
                       : readPlaying
                         ? "Playing…"
-                        : "▶ Play full read"}
+                        : selfDirect
+                          ? "▶ Perform, self-directed"
+                          : "▶ Play full read"}
+                  </button>
+                  <button
+                    onClick={() => setSelfDirect((v) => !v)}
+                    aria-pressed={selfDirect}
+                    title="Cue listens to every take it performs and retries the lines that miss your direction. Up to 3 takes a line."
+                    className={
+                      BTN_QUIET + (selfDirect ? " border-cue-deep bg-cue/10 text-cue" : "")
+                    }
+                  >
+                    {selfDirect ? "● " : "○ "}Direct until it lands
                   </button>
                   {musicTracks.length > 0 && (
                     <select
@@ -1395,6 +1505,78 @@ export default function Home() {
                       />
                     ))}
                   </div>
+                </div>
+                {selfDirect && (
+                  <p className="mt-2 max-w-[68ch] font-mono text-[10px] leading-relaxed text-ink-3">
+                    Cue re-plans the scene from your direction, listens to every take with its own
+                    ears, and retries what misses: a fresh roll first, then a re-direct born from
+                    the miss. Three takes a line at most, and the best one ships.
+                  </p>
+                )}
+              </Panel>
+            )}
+
+            {/* The take report: the loop's honest account of a self-directed
+                read. One row per line; every chip is a real take you can hear. */}
+            {performReport && lines.length > 0 && (
+              <Panel
+                title="Take report"
+                meta={
+                  `${performReport.passed_lines}/${performReport.total_lines} landed · ` +
+                  `${performReport.total_renders} renders` +
+                  (performReport.arc_correlation !== null
+                    ? ` · arc r ${performReport.arc_correlation.toFixed(2)}`
+                    : "")
+                }
+              >
+                <div className="flex flex-col gap-2">
+                  {performReport.lines.map((line, i) => (
+                    <div key={i} className="flex flex-wrap items-center gap-2">
+                      <span className="w-16 shrink-0 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-3">
+                        L{String(i + 1).padStart(2, "0")}
+                        <span className={line.passed ? "text-cue" : ""}>
+                          {line.passed ? " ✓" : " ·"}
+                        </span>
+                      </span>
+                      {line.takes.map((t) => {
+                        const kept = t.take === line.kept_take;
+                        return (
+                          <button
+                            key={t.take}
+                            onClick={() => playTakeClip(t)}
+                            title={
+                              (t.score.passed ? "landed" : t.score.hint ?? "missed") +
+                              ` · click to hear this take`
+                            }
+                            className={
+                              "rounded border px-2 py-1 font-mono text-[10px] transition-colors duration-150 active:translate-y-px " +
+                              (kept
+                                ? "border-cue-deep bg-cue/15 text-cue"
+                                : "border-edge bg-panel-2 text-ink-2 hover:border-cue-deep hover:text-cue")
+                            }
+                          >
+                            T{t.take} {t.action} {t.score.measured.toFixed(2)}
+                            {kept ? " ★" : ""}
+                          </button>
+                        );
+                      })}
+                      <span className="font-mono text-[10px] text-ink-3">
+                        aim {line.target.toFixed(2)}
+                      </span>
+                      {line.engine_limited && (
+                        <span
+                          title="This voice can't push further on this direction, so Cue kept the closest take instead of burning another render."
+                          className="rounded border border-edge px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.08em] text-ink-3"
+                        >
+                          engine limit
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                  <p className="mt-1 max-w-[68ch] font-mono text-[10px] leading-relaxed text-ink-3">
+                    Every take Cue tried, measured on the same 0 to 1 intensity scale it was
+                    directed on. ★ marks the take that shipped. Click any chip to hear that take.
+                  </p>
                 </div>
               </Panel>
             )}

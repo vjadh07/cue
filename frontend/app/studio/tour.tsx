@@ -51,6 +51,10 @@ const STEPS: Step[] = [
     title: "4. Play, retake, produce",
     body: "Each line gets a Play button and a note field for retakes (“again, colder”). The Booth chart shows the arc, planned vs what Cue actually performed. Finally, “Play full read” stitches one track you download as an mp3 with subtitles.",
   },
+  {
+    title: "5. Or let Cue direct itself",
+    body: "Flip “Direct until it lands” in the Take panel and Cue listens to every take it performs, retries the lines that miss your direction, and ships the best one with an honest take report. That report is the loop's whole story: every take, measured, click any chip to hear it.",
+  },
 ];
 
 const PAD = 8; // breathing room around the highlighted element
