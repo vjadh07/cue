@@ -54,6 +54,22 @@ def test_volume_does_not_affect_the_key(tmp_path):
     )
 
 
+def test_take_zero_keeps_todays_keys_unchanged(tmp_path):
+    """The take salt must not invalidate the existing cache: take 0 (the
+    default) produces exactly the key we'd get without mentioning takes."""
+    cache = AudioCache(tmp_path)
+    assert cache.key("el", S, "hi", NO_TAGS) == cache.key("el", S, "hi", NO_TAGS, take=0)
+
+
+def test_each_take_is_a_different_key(tmp_path):
+    """A re-roll must be a genuine re-render, not a cache hit on take 1."""
+    cache = AudioCache(tmp_path)
+    base = cache.key("el", S, "hi", NO_TAGS)
+    roll = cache.key("el", S, "hi", NO_TAGS, take=1)
+    assert roll != base
+    assert cache.key("el", S, "hi", NO_TAGS, take=2) not in (base, roll)
+
+
 def test_key_is_a_64_char_hex_hash(tmp_path):
     cache = AudioCache(tmp_path)
     key = cache.key("piper", S, "hello", NO_TAGS)

@@ -171,6 +171,21 @@ def test_engine_errors_when_no_provider_supports_the_voice(tmp_path):
     assert cloud.calls == 0
 
 
+def test_a_reroll_takes_a_fresh_render_not_the_cached_take(tmp_path):
+    """take=1 must miss take 0's cache (that's the whole point of a re-roll),
+    and each take is itself cached for the stitcher to reuse."""
+    el = FakeProvider("elevenlabs", "mp3")
+    engine = Engine([el], AudioCache(tmp_path))
+
+    first = engine.render("hello", S, TAGS)
+    reroll = engine.render("hello", S, TAGS, take=1)
+
+    assert el.calls == 2  # the re-roll really re-rendered
+    assert reroll["audio_id"] != first["audio_id"]
+    assert engine.render("hello", S, TAGS, take=1)["cached"] is True
+    assert el.calls == 2  # the same take replays from cache
+
+
 def test_different_voice_is_a_different_render(tmp_path):
     # Same line/settings/tags but a different voice must not reuse the cache.
     cache = AudioCache(tmp_path)

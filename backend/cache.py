@@ -23,6 +23,7 @@ class AudioCache:
         tags: list,
         voice: str = "",
         delivery: str = "",
+        take: int = 0,
     ) -> str:
         """A stable id for one exact render. Same inputs always give the same id.
 
@@ -31,6 +32,11 @@ class AudioCache:
         and the delivery (the performed rewrite actually spoken, when there is
         one). Volume is excluded — it's applied at playback, so it doesn't
         change the file.
+
+        `take` is the performance loop's re-roll salt: TTS is stochastic, so
+        take 1, 2, ... of identical inputs are genuinely different renders and
+        must not collapse into one cache entry. Take 0 (the default) leaves
+        the key exactly as before, so the existing cache stays warm.
         """
         s = settings
         tag_str = ",".join(tags)
@@ -38,6 +44,8 @@ class AudioCache:
             f"{engine}|{voice}|{s['stability']:.2f}|{s['style']:.2f}|{s['speed']:.2f}"
             f"|{tag_str}|{delivery}|{text}"
         )
+        if take:
+            raw += f"|t{take}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def path(self, key: str, ext: str) -> Path:

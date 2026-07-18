@@ -29,9 +29,12 @@ class Engine:
         voice: str = "",
         delivery: str = "",
         api_key: str = "",
+        take: int = 0,
     ) -> dict:
         # api_key is whose account pays (bring-your-own-key); it never enters
         # the cache key — the same render is the same audio for everyone.
+        # `take` is the performance loop's re-roll salt: non-zero takes render
+        # fresh instead of replaying take 0 from the cache.
         # Providers can declare which voices they speak (a local clone must
         # never reach a cloud engine; a cloud voice never reaches the clone
         # engine). No declaration means "any voice".
@@ -42,7 +45,7 @@ class Engine:
         for provider in self.providers:
             if not handles(provider):
                 continue
-            key = self.cache.key(provider.name, settings, text, tags, voice, delivery)
+            key = self.cache.key(provider.name, settings, text, tags, voice, delivery, take)
             if self.cache.has(key, provider.ext):
                 return {
                     "audio_id": key,
@@ -65,7 +68,7 @@ class Engine:
                         time.sleep(RETRY_DELAY_SECONDS)  # let a blip pass, retry once
             if audio is None:
                 continue  # truly down/out of quota — try the next provider
-            key = self.cache.key(provider.name, settings, text, tags, voice, delivery)
+            key = self.cache.key(provider.name, settings, text, tags, voice, delivery, take)
             self.cache.write(key, provider.ext, audio)
             return {
                 "audio_id": key,
