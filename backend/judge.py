@@ -16,11 +16,14 @@ primitive: audio in (via listen.profile), verdict out.
 TOLERANCE = 0.25
 
 # Raw booth energy compresses all speech into a narrow band — every TTS
-# normalizes loudness, so emotion moves the number only within ~0.45..0.8
-# (live anchors: a calm read measured ~0.54, a shouted take ~0.71). The
-# targets speak full 0..1, so the judge stretches the speech band onto it.
-SPEECH_FLOOR = 0.45
-SPEECH_CEIL = 0.8
+# normalizes loudness, so emotion moves the number only inside it. The
+# anchors bracket every live measurement to date (calm reads 0.54..0.58,
+# full-markup shouts 0.63..0.71) with a little margin each side. They were
+# 0.45..0.8 at first, which left hot targets unreachable: the best live
+# shout calibrated to 0.62 against an aim of 0.9, an impossible gap. The
+# ceiling must sit at what a real shout measures, not at a hopeful number.
+SPEECH_FLOOR = 0.50
+SPEECH_CEIL = 0.72
 
 
 def calibrate(raw_energy: float) -> float:

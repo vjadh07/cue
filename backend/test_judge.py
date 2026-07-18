@@ -22,26 +22,38 @@ def test_target_is_clamped_to_the_unit_range():
 
 
 # --- calibrate: raw booth energy -> the target's 0..1 scale ---
-# TTS output is loudness-normalized, so ALL speech measures ~0.45..0.8 raw;
-# emotion lives inside that band. Calibration stretches it to the unit range
-# the targets speak. Anchors come from live measurements: a calm read ~0.54
-# raw must read low, a shouted take ~0.71 raw must read hot.
+# TTS output is loudness-normalized, so ALL speech measures inside a narrow
+# raw band; emotion lives inside it. Calibration stretches that band to the
+# unit range the targets speak. Anchors bracket every live measurement to
+# date: calm reads 0.54..0.58 raw, full shouts 0.63..0.71 raw. The first
+# anchors (0.45..0.8) left hot targets mathematically unreachable: the best
+# live shout scored 0.62 against an aim of 0.9 and could never close.
 
 
 def test_calibration_stretches_the_speech_band():
     from judge import calibrate
 
-    assert calibrate(0.45) == 0.0
-    assert calibrate(0.8) == 1.0
+    assert calibrate(0.50) == 0.0
+    assert calibrate(0.72) == 1.0
     assert calibrate(0.54) < 0.3  # live calm read -> low
-    assert calibrate(0.71) > 0.7  # live shouted take -> hot
+    assert calibrate(0.71) > 0.9  # the hottest live shout -> near the top
 
 
 def test_calibration_clamps_outside_the_band():
     from judge import calibrate
 
-    assert calibrate(0.1) == 0.0
+    assert calibrate(0.3) == 0.0
     assert calibrate(0.95) == 1.0
+
+
+def test_a_real_shout_can_land_a_demanding_target():
+    """The regression that moved the anchors: the best live shout (0.667 raw,
+    full delivery markup) must be able to pass a 0.9 target. Under the old
+    anchors it calibrated to 0.62 and no take could ever close the gap."""
+    from judge import calibrate, judge_take
+
+    verdict = judge_take(calibrate(0.667), target=0.9)
+    assert verdict["passed"] is True
 
 
 # --- judge_take: did the take land? ---

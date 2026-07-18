@@ -45,12 +45,17 @@ as "evals for voice", the missing primitive in the 2026 voice stack.
   takes numbers, not audio, so its tests are instant; callers compose
   `profile()` + `judge_take()`.
 - Calibration (added after the live smoke): every TTS normalizes loudness,
-  so raw booth energy compresses all speech into ~0.45..0.8 — emotion moves
-  the number only inside that band, while targets speak full 0..1.
-  `judge.calibrate(raw)` stretches the speech band onto the target scale
-  (anchors from live runs: calm read ~0.54 raw -> low, shouted take ~0.71
-  raw -> hot). /perform judges calibrated energy; /analyze keeps reporting
-  raw (descriptive, not judging).
+  so raw booth energy compresses all speech into a narrow band — emotion
+  moves the number only inside it, while targets speak full 0..1.
+  `judge.calibrate(raw)` stretches the speech band onto the target scale.
+  Anchors are set from live measurements and bracket everything observed
+  to date (calm reads 0.54..0.58 raw, full-markup shouts 0.63..0.71 raw):
+  floor 0.50, ceiling 0.72. The first anchors (0.45..0.8) put the ceiling
+  above what any real shout measures, which made hot targets unreachable —
+  the best live take scored 0.62 against an aim of 0.9 with no way to
+  close. The ceiling must sit at what a real shout measures. /perform
+  judges calibrated energy; /analyze keeps reporting raw (descriptive,
+  not judging).
 
 ### 2. The mouth: existing pieces, composed
 

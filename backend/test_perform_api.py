@@ -101,7 +101,7 @@ def test_a_flat_take_gets_a_fresh_reroll(stage):
 
 def test_escalation_reaches_the_brain_with_the_miss_note(stage):
     # Raw energies: flat, then better-but-short, then the redirect lands
-    # (calibrated: 0.0 -> 0.29 -> 0.94 against target 0.8).
+    # (calibrated: 0.0 -> 0.23 -> 1.0 against target 0.8).
     brain, engine, client = stage(energies=[0.3, 0.55, 0.78])
 
     response = client.post("/perform", json={"script": "Stop it.", "direction": "furious"})
@@ -145,7 +145,7 @@ def test_empty_script_is_a_400(stage):
 
 def test_take_budget_is_clamped_to_the_loops_three_stages(stage):
     # Always failing, always improving (dodges futility): must stop at 3.
-    # (Calibrated: 0.14 -> 0.29 -> 0.43 against target 0.8.)
+    # (Calibrated: 0.0 -> 0.23 -> 0.45 against target 0.8.)
     brain, engine, client = stage(energies=[0.5, 0.55, 0.6])
 
     response = client.post(
