@@ -3,6 +3,8 @@ deterministic final fallback). Fake brains exercise the orchestration without
 calling a real LLM.
 """
 
+import json
+
 from brains import BrainEngine, KeywordBrain, _build_messages, _parse_director_json
 from settings import DEFAULTS
 
@@ -169,6 +171,356 @@ def test_interpret_script_hint_alone_still_directs():
     a = FakeBrain("groq")
     BrainEngine([a]).interpret_script(["A"], "", hints=["beat, then softer"])
     assert a.directions == ["This line: beat, then softer"]
+
+
+# --- batch mode: long scripts go to the brain in chunks, not line by line ---
+# Per-line-with-full-script costs O(n^2) tokens and trips Groq's free tier
+# around 40-60 lines. Past BATCH_THRESHOLD the engine asks for BATCH_SIZE
+# plans per call; short scripts keep the per-line path (best quality).
+
+
+class FakeBatchBrain(FakeBrain):
+    def __init__(self, name, fail=False, fail_batch=False):
+        super().__init__(name, fail)
+        self.fail_batch = fail_batch
+        self.batch_calls = []  # (batch, start, direction, hints) per call
+
+    def interpret_batch(self, batch, direction, script=None, start=0, hints=None):
+        self.batch_calls.append((list(batch), start, direction, hints))
+        if self.fail_batch:
+            raise RuntimeError(f"{self.name} batch down")
+        return [
+            {"settings": S, "tags": [], "notes": f"plan {start + i}", "delivery": None}
+            for i in range(len(batch))
+        ]
+
+
+LONG = [f"Line {i}." for i in range(100)]
+
+
+def test_short_scripts_keep_the_per_line_path():
+    a = FakeBatchBrain("groq")
+    results = BrainEngine([a]).interpret_script(["A", "B", "C"], "warm")
+    assert len(results) == 3
+    assert a.batch_calls == []
+    assert a.calls == 3
+
+
+def test_long_scripts_go_to_the_brain_in_batches():
+    a = FakeBatchBrain("groq")
+    results = BrainEngine([a]).interpret_script(LONG, "build slowly")
+    assert len(results) == 100
+    assert a.calls == 0  # not one single-line call
+    assert len(a.batch_calls) == 10
+    assert all(len(batch) == 10 for batch, *_ in a.batch_calls)
+    # Order is preserved end to end, whatever order the chunks ran in.
+    assert [r["notes"] for r in results] == [f"plan {i}" for i in range(100)]
+    assert all(r["brain"] == "groq" for r in results)
+
+
+def test_batch_mode_handles_a_partial_last_chunk():
+    a = FakeBatchBrain("groq")
+    results = BrainEngine([a]).interpret_script(LONG[:45], "warm")
+    assert len(results) == 45
+    assert [len(batch) for batch, *_ in a.batch_calls] == [10, 10, 10, 10, 5]
+
+
+def test_batch_mode_passes_start_and_hints_through():
+    a = FakeBatchBrain("groq")
+    hints = [None] * 45
+    hints[40] = "quietly"
+    BrainEngine([a]).interpret_script(LONG[:45], "warm", hints=hints)
+    starts = sorted(start for _, start, *_ in a.batch_calls)
+    assert starts == [0, 10, 20, 30, 40]
+    # Every batch call sees the hints list; the prompt folds in its own.
+    assert all(h == hints for *_, h in a.batch_calls)
+
+
+def test_batch_failure_falls_to_the_next_batch_brain():
+    a = FakeBatchBrain("groq", fail_batch=True)
+    b = FakeBatchBrain("ollama")
+    results = BrainEngine([a, b]).interpret_script(LONG[:45], "warm")
+    assert all(r["brain"] == "ollama" for r in results)
+    assert len(b.batch_calls) == 5
+
+
+def test_batch_failure_everywhere_falls_back_per_line():
+    # No brain can batch (or all batch calls fail): every line still gets a
+    # plan through the per-line path, so a long script never dies.
+    a = FakeBatchBrain("groq", fail_batch=True)
+    results = BrainEngine([a]).interpret_script(LONG[:45], "warm")
+    assert len(results) == 45
+    assert a.calls == 45  # per-line fallback did the work
+    assert all(r["brain"] == "groq" for r in results)
+
+
+def test_per_line_fallback_in_batch_mode_uses_a_window_not_the_whole_script():
+    # The whole point of batch mode is escaping O(n^2); the fallback must not
+    # sneak it back in by passing all 45 lines on every single-line call.
+    a = FakeBatchBrain("groq", fail_batch=True)
+    BrainEngine([a]).interpret_script(LONG[:45], "warm")
+    assert all(script is not None and len(script) <= 11 for script, _ in a.seen)
+
+
+# --- _build_batch_messages: the batched director prompt ---
+
+
+def test_build_batch_messages_shows_a_window_not_the_whole_script():
+    from brains import _build_batch_messages
+
+    user = _build_batch_messages(LONG, "build slowly", start=50, count=10)[-1]["content"]
+    assert "Line 50." in user  # the batch itself (0-based line 50)
+    assert "Line 46." in user and "Line 64." in user  # the window around it
+    assert "Line 0." not in user and "Line 99." not in user  # not the whole script
+    assert "lines 51-60" in user  # 1-based, what to perform
+    assert "100 lines" in user  # arc position: how big the whole script is
+    assert "build slowly" in user
+    assert '"plans"' in user  # the reply contract
+
+
+def test_build_batch_messages_lists_each_line_once():
+    # Token budget: the free tier meters tokens per minute, so the batch
+    # prompt must not carry the performed lines twice (once in the excerpt,
+    # once in a perform list). Marked lines in one excerpt, that's it.
+    from brains import _build_batch_messages
+
+    user = _build_batch_messages(LONG, "warm", start=50, count=10)[-1]["content"]
+    assert user.count("Line 50.") == 1
+
+
+def test_build_batch_messages_skips_the_few_shot_anchors():
+    # Same budget: the two few-shot exchanges cost hundreds of tokens per
+    # call. The system brief alone carries the format in batch mode.
+    from brains import _build_batch_messages
+
+    messages = _build_batch_messages(LONG, "warm", start=0, count=10)
+    assert len(messages) == 2  # system + user, no anchors
+    assert messages[0]["role"] == "system"
+
+
+def test_build_batch_messages_folds_hints_into_their_own_lines():
+    from brains import _build_batch_messages
+
+    hints = [None] * 20
+    hints[12] = "through gritted teeth"
+    user = _build_batch_messages(LONG[:20], "warm", start=10, count=10, hints=hints)[-1]["content"]
+    assert "through gritted teeth" in user
+
+
+# --- _parse_batch_json: the batched reply, cleaned plan by plan ---
+
+
+def test_parse_batch_json_cleans_every_plan():
+    from brains import _parse_batch_json
+
+    content = json.dumps(
+        {
+            "plans": [
+                {"delivery": "[sighs] One.", "tags": ["sighs"], "stability": 0.8, "notes": "weary"},
+                {"delivery": "TWO!", "tags": ["banana"], "stability": 9.0, "notes": "x" * 200},
+            ]
+        }
+    )
+    plans = _parse_batch_json(content, ["One.", "Two!"])
+    assert plans[0]["delivery"] == "[sighs] One."
+    assert plans[0]["settings"]["stability"] == 0.8
+    assert plans[1]["tags"] == []  # off-whitelist tag dropped
+    assert plans[1]["settings"]["stability"] == 1.0  # clamped
+    assert len(plans[1]["notes"]) == 80
+
+
+def test_parse_batch_json_rejects_a_cheating_delivery_per_plan():
+    from brains import _parse_batch_json
+
+    content = json.dumps(
+        {
+            "plans": [
+                {"delivery": "Totally different words."},
+                {"delivery": "Two, exactly."},
+            ]
+        }
+    )
+    plans = _parse_batch_json(content, ["One.", "Two, exactly."])
+    assert plans[0]["delivery"] is None  # words changed -> dropped
+    assert plans[1]["delivery"] == "Two, exactly."
+
+
+def test_parse_batch_json_wrong_count_raises():
+    from brains import _parse_batch_json
+
+    content = json.dumps({"plans": [{"notes": "only one"}]})
+    try:
+        _parse_batch_json(content, ["One.", "Two."])
+        assert False, "expected a count mismatch to raise"
+    except ValueError:
+        pass
+
+
+# --- GroqBrain 429 handling: wait out the rate window, don't drop the brain ---
+# The free tier meters tokens per minute. A long script's batches can exhaust
+# the window mid-run; giving up instantly demotes half the script to the
+# keyword brain and the arc goes flat. A 429 with Retry-After means "worth
+# waiting": sleep it out (bounded) and try again before falling back.
+
+
+class FakeResponse:
+    def __init__(self, status_code, content="", headers=None):
+        self.status_code = status_code
+        self.headers = headers or {}
+        self._content = content
+
+    def json(self):
+        return {"choices": [{"message": {"content": self._content}}]}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+def _plan_json():
+    return '{"stability": 0.2, "style": 0.7, "speed": 1.0, "volume": 1.0, "notes": "hot"}'
+
+
+def test_groq_waits_out_a_429_then_succeeds(monkeypatch):
+    from brains import GroqBrain
+
+    responses = [
+        FakeResponse(429, headers={"retry-after": "1.5"}),
+        FakeResponse(200, _plan_json()),
+    ]
+    sleeps = []
+    monkeypatch.setattr("brains.httpx.post", lambda *a, **k: responses.pop(0))
+    monkeypatch.setattr("brains.time.sleep", lambda s: sleeps.append(s))
+    brain = GroqBrain()
+    brain.api_key = "k"
+
+    result = brain.interpret("Stop.", "furious")
+
+    assert result["settings"]["stability"] == 0.2
+    assert sleeps == [1.5]  # honored the server's own retry hint
+
+
+def test_groq_gives_up_after_one_bounded_wait(monkeypatch):
+    # ONE wait per call, then a typed failure. More retries here compound
+    # catastrophically: a failed batch falls back to 10 per-line calls, and
+    # if each of those also sleeps out 429s, a long script hangs for many
+    # minutes (live-observed). The window being empty is the chain's problem.
+    from brains import GroqBrain, RateLimited
+
+    calls = []
+    monkeypatch.setattr(
+        "brains.httpx.post",
+        lambda *a, **k: calls.append(1) or FakeResponse(429, headers={"retry-after": "1"}),
+    )
+    monkeypatch.setattr("brains.time.sleep", lambda s: None)
+    brain = GroqBrain()
+    brain.api_key = "k"
+
+    try:
+        brain.interpret("Stop.", "furious")
+        assert False, "expected the final 429 to raise RateLimited"
+    except RateLimited:
+        pass
+    assert len(calls) == 2  # one try + one waited retry, then hand off
+
+
+def test_groq_fails_fast_when_the_wait_is_hopeless(monkeypatch):
+    # A retry-after in the hundreds of seconds is the DAILY token cap, not
+    # the minute window (live-observed: 900-1026s). No user waits that out;
+    # napping 30s first just delays the fallback. Hand off immediately.
+    from brains import GroqBrain, RateLimited
+
+    calls = []
+    sleeps = []
+    monkeypatch.setattr(
+        "brains.httpx.post",
+        lambda *a, **k: calls.append(1) or FakeResponse(429, headers={"retry-after": "993"}),
+    )
+    monkeypatch.setattr("brains.time.sleep", lambda s: sleeps.append(s))
+    brain = GroqBrain()
+    brain.api_key = "k"
+
+    try:
+        brain.interpret("Stop.", "furious")
+        assert False, "expected RateLimited"
+    except RateLimited:
+        pass
+    assert calls == [1]  # one attempt, no retry against a wall
+    assert sleeps == []  # and no pointless nap
+
+
+def test_groq_honors_a_precise_waitable_retry_after(monkeypatch):
+    # Within the minute-window regime the server's own number is exact;
+    # sleeping less just guarantees a second 429.
+    from brains import GroqBrain
+
+    responses = [
+        FakeResponse(429, headers={"retry-after": "45"}),
+        FakeResponse(200, _plan_json()),
+    ]
+    sleeps = []
+    monkeypatch.setattr("brains.httpx.post", lambda *a, **k: responses.pop(0))
+    monkeypatch.setattr("brains.time.sleep", lambda s: sleeps.append(s))
+    brain = GroqBrain()
+    brain.api_key = "k"
+
+    brain.interpret("Stop.", "furious")
+
+    assert sleeps == [45.0]
+
+
+def test_batch_fallback_skips_the_brain_that_rate_limited_it(monkeypatch):
+    # When the batch died on an exhausted rate window, hammering the same
+    # brain once per line is pure amplification: skip it for this chunk and
+    # let the rest of the chain do the work.
+    from brains import RateLimited
+
+    class LimitedBrain(FakeBatchBrain):
+        def interpret_batch(self, *a, **k):
+            raise RateLimited("window empty")
+
+    a = LimitedBrain("groq")
+    b = FakeBrain("keyword")
+    results = BrainEngine([a, b]).interpret_script(LONG[:45], "warm")
+
+    assert len(results) == 45
+    assert all(r["brain"] == "keyword" for r in results)
+    assert a.calls == 0  # not one per-line call against the empty window
+
+
+def test_groq_does_not_retry_other_errors(monkeypatch):
+    from brains import GroqBrain
+
+    calls = []
+    monkeypatch.setattr(
+        "brains.httpx.post", lambda *a, **k: calls.append(1) or FakeResponse(500)
+    )
+    brain = GroqBrain()
+    brain.api_key = "k"
+
+    try:
+        brain.interpret("Stop.", "furious")
+        assert False, "expected a server error to raise immediately"
+    except Exception:
+        pass
+    assert len(calls) == 1  # a 500 is not a rate window; fail fast to Ollama
+
+
+def test_groq_batch_rides_the_same_retry(monkeypatch):
+    from brains import GroqBrain
+
+    plans = '{"plans": [{"notes": "a"}, {"notes": "b"}]}'
+    responses = [FakeResponse(429, headers={"retry-after": "0.5"}), FakeResponse(200, plans)]
+    sleeps = []
+    monkeypatch.setattr("brains.httpx.post", lambda *a, **k: responses.pop(0))
+    monkeypatch.setattr("brains.time.sleep", lambda s: sleeps.append(s))
+    brain = GroqBrain()
+    brain.api_key = "k"
+
+    result = brain.interpret_batch(["One.", "Two."], "warm", script=["One.", "Two."], start=0)
+
+    assert len(result) == 2
+    assert sleeps == [0.5]
 
 
 # --- chat: the writer's room (only LLM brains can write) ---
