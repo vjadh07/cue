@@ -228,6 +228,14 @@ class OllamaBrain:
         self.model = model
         self.url = url
 
+    def ready(self) -> bool:
+        """Is the local Ollama server answering? A quick local ping, nothing
+        loaded, nothing spent."""
+        try:
+            return httpx.get(f"{self.url}/api/tags", timeout=1.5).status_code == 200
+        except Exception:
+            return False
+
     def interpret(
         self, line: str, direction: str, script: list[str] | None = None, index: int = 0
     ) -> dict:
@@ -305,6 +313,11 @@ class GroqBrain:
         self.url = url
         # main.py loads .env before constructing the brains, so the key is here.
         self.api_key = os.environ.get("GROQ_API_KEY", "")
+
+    def ready(self) -> bool:
+        """A key is configured. Deliberately not a live call: /status must
+        never spend quota."""
+        return bool(self.api_key)
 
     def _post(self, payload: dict, timeout: float) -> httpx.Response:
         """POST to Groq, waiting out one short 429. The free tier meters
@@ -406,6 +419,9 @@ class KeywordBrain:
 
     name = "keyword"
 
+    def ready(self) -> bool:
+        return True  # no network, no model: it cannot be down
+
     def interpret(
         self, line: str, direction: str, script: list[str] | None = None, index: int = 0
     ) -> dict:
@@ -431,6 +447,10 @@ class BrainEngine:
 
     def __init__(self, brains: list) -> None:
         self.brains = brains
+
+    def status(self) -> list[dict]:
+        """Each brain's own cheap self-check, in fallback-chain order."""
+        return [{"name": brain.name, "ready": brain.ready()} for brain in self.brains]
 
     def interpret(
         self,

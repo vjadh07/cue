@@ -159,6 +159,23 @@ def root():
     return {"status": "ok", "message": "Cue backend is running"}
 
 
+@app.get("/health")
+def health():
+    """Liveness probe for hosting platforms: cheap, no dependencies."""
+    return {"ok": True}
+
+
+@app.get("/status")
+def status():
+    """Which parts of the system are ready, for demos and debugging. Cheap
+    local checks only: no quota spent, booleans and counts, never keys."""
+    return {
+        "brains": brain_engine.status(),
+        "voices": voice_engine.status(),
+        "clones": len(clones.list_clones()),
+    }
+
+
 @app.post("/speak")
 def speak(request: SpeakRequest, x_elevenlabs_key: str = Header(default="")):
     text = request.text.strip()

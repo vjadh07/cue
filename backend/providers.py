@@ -43,6 +43,11 @@ class ElevenLabsProvider:
         self.voice_id = os.environ.get("ELEVENLABS_VOICE_ID", DEFAULT_VOICE_ID)
         self.model = os.environ.get("ELEVENLABS_MODEL", DEFAULT_MODEL)
 
+    def ready(self) -> bool:
+        """A host key is configured (visitors can still bring their own).
+        Deliberately not a live call: /status must never spend credits."""
+        return bool(self.api_key)
+
     def supports(self, voice: str) -> bool:
         # Local clones never leave the machine — the cloud never sees them.
         return not voice.startswith("local:")
@@ -150,6 +155,13 @@ class ChatterboxProvider:
         # first clone render and is reused after that.
         self._model = None
 
+    def ready(self) -> bool:
+        """The package is installed. A status check, not a warmup: the ~2GB
+        of weights must not load here."""
+        from importlib.util import find_spec
+
+        return find_spec("chatterbox") is not None
+
     def supports(self, voice: str) -> bool:
         return voice.startswith("local:")
 
@@ -215,6 +227,11 @@ class PiperProvider:
     def __init__(self) -> None:
         # The model is ~60MB, so load it once and reuse it, not per request.
         self._voice: PiperVoice | None = None
+
+    def ready(self) -> bool:
+        """The voice model file is on disk (checked at call time, so a
+        model downloaded after boot counts)."""
+        return PIPER_MODEL.exists()
 
     def supports(self, voice: str) -> bool:
         # Piper can't speak a clone: falling back to its generic voice would

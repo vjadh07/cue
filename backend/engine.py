@@ -21,6 +21,10 @@ class Engine:
         self.providers = providers
         self.cache = cache
 
+    def status(self) -> list[dict]:
+        """Each provider's own cheap self-check, in preference order."""
+        return [{"name": p.name, "ready": p.ready()} for p in self.providers]
+
     def render(
         self,
         text: str,
