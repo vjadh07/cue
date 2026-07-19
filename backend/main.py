@@ -75,6 +75,50 @@ brain_engine = BrainEngine([GroqBrain(), OllamaBrain(), KeywordBrain()])
 SAFE_AUDIO_NAME = re.compile(r"[a-f0-9]{64}\.(wav|mp3)")
 
 
+# --- Input limits ---
+# Generous for real use, hard stops past that: one request must never wedge
+# the server or spend a whole day's quota by itself. Every message names the
+# cap so the caller knows what to fix.
+MAX_SCRIPT_CHARS = 50_000  # a scene or an act, not a novel
+MAX_SCRIPT_LINES = 200  # 200 lines is already a 20-call batched direct
+MAX_LINE_CHARS = 500  # a spoken line is a sentence or three
+MAX_DIRECTION_CHARS = 1_000  # a director's note, not an essay
+MAX_CHAT_CHARS = 8_000  # the writer's-room thread the brain re-reads each turn
+MAX_FOUNTAIN_CHARS = 200_000  # a whole screenplay; the import trims it down
+MAX_CLONE_BYTES = 25 * 1024 * 1024  # minutes of high-bitrate audio
+
+
+def guard_direction(direction: str) -> None:
+    if len(direction) > MAX_DIRECTION_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"the direction is too long (max {MAX_DIRECTION_CHARS} characters)",
+        )
+
+
+def guard_script_text(script: str) -> None:
+    if len(script) > MAX_SCRIPT_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"the script is too long (max {MAX_SCRIPT_CHARS} characters)",
+        )
+
+
+def guard_line_count(count: int) -> None:
+    if count > MAX_SCRIPT_LINES:
+        raise HTTPException(
+            status_code=400, detail=f"too many lines (max {MAX_SCRIPT_LINES})"
+        )
+
+
+def guard_line_text(text: str) -> None:
+    if len(text) > MAX_LINE_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"a line is too long (max {MAX_LINE_CHARS} characters)",
+        )
+
+
 class SpeakRequest(BaseModel):
     text: str
     direction: str = ""
@@ -181,6 +225,8 @@ def speak(request: SpeakRequest, x_elevenlabs_key: str = Header(default="")):
     text = request.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
+    guard_line_text(text)
+    guard_direction(request.direction)
 
     # 1. Interpret the direction into settings + audio tags (brain: Ollama →
     #    keyword fallback).
@@ -207,7 +253,12 @@ def direct(request: DirectRequest):
     interprets each line's text with the full script as context, so the direction
     can ramp across the arc. Brain only — no audio is rendered here, so this is
     fast and spends no ElevenLabs credits."""
+    guard_direction(request.direction)
+    guard_script_text(request.script)
     parsed = parse_script(request.script)
+    guard_line_count(len(parsed))
+    for line in parsed:
+        guard_line_text(line["text"])
     texts = [line["text"] for line in parsed]
     hints = [line["hint"] for line in parsed]
     interpretations = brain_engine.interpret_script(texts, request.direction, hints=hints)
@@ -238,6 +289,7 @@ def render(request: RenderRequest, x_elevenlabs_key: str = Header(default="")):
     text = request.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
+    guard_line_text(text)
 
     # The settings/tags/delivery came from the client, so re-clean them before
     # the voice — a tampered delivery must never be spoken.
@@ -267,6 +319,11 @@ def chat(request: ChatRequest):
     ]
     if not messages:
         raise HTTPException(status_code=400, detail="messages are required")
+    if sum(len(m["content"]) for m in messages) > MAX_CHAT_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"the conversation is too long (max {MAX_CHAT_CHARS} characters); start a fresh one",
+        )
     try:
         return brain_engine.chat(messages)
     except RuntimeError:
@@ -325,6 +382,9 @@ def read(request: ReadRequest, x_elevenlabs_key: str = Header(default="")):
     Download button serves."""
     if not request.lines:
         raise HTTPException(status_code=400, detail="lines are required")
+    guard_line_count(len(request.lines))
+    for line in request.lines:
+        guard_line_text(line.text.strip())
 
     clips = []
     volumes = []
@@ -381,9 +441,14 @@ def perform(request: PerformRequest, x_elevenlabs_key: str = Header(default=""))
     rewrites the delivery knowing exactly how the take missed. Always ships
     the best take per line, with an honest per-take report. This is /direct +
     /read + /analyze + /retake wired into one director's loop."""
+    guard_direction(request.direction)
+    guard_script_text(request.script)
     parsed = parse_script(request.script)
     if not parsed:
         raise HTTPException(status_code=400, detail="script is required")
+    guard_line_count(len(parsed))
+    for line in parsed:
+        guard_line_text(line["text"])
     max_takes = max(1, min(perform_module.MAX_TAKES, request.max_takes))
     tolerance = max(0.05, min(0.9, request.tolerance))
 
@@ -505,6 +570,11 @@ async def voice_clone(
         raise HTTPException(status_code=400, detail="a recording is required")
 
     audio = await files[0].read()
+    if len(audio) > MAX_CLONE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="that recording is too big; a minute or two of audio is plenty",
+        )
     try:
         entry = clones.add_clone(name.strip(), audio)
     except ValueError:
@@ -557,6 +627,9 @@ def retake(request: RetakeRequest):
     note = request.note.strip()
     if not note:
         raise HTTPException(status_code=400, detail="a note is required")
+    guard_direction(note)  # a note is a direction; same budget
+    guard_direction(request.direction)
+    guard_line_count(len(request.script))
     if not 0 <= request.index < len(request.script):
         raise HTTPException(status_code=400, detail="index out of range")
 
@@ -571,6 +644,11 @@ def import_fountain(request: FountainRequest):
     WriterDuet, and Final Draft export as plain text) into Cue's native script,
     merging character extensions (DEV (V.O.) is DEV), carrying parentheticals
     as per-line direction hints, and dropping everything nobody speaks."""
+    if len(request.text) > MAX_FOUNTAIN_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"that screenplay is too big (max {MAX_FOUNTAIN_CHARS} characters)",
+        )
     parsed = parse_fountain(request.text)
     script_text = to_cue_script(parsed, include_action=request.include_action)
     if not script_text.strip():
