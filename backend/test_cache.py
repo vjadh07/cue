@@ -97,3 +97,74 @@ def test_different_extensions_do_not_collide(tmp_path):
     key = cache.key("piper", S, "hello", NO_TAGS)
     cache.write(key, "wav", b"wav-data")
     assert cache.has(key, "mp3") is False
+
+
+# --- eviction: the cache must not grow until the disk is full ---
+# Every render is cached forever otherwise; on a public deploy that is a
+# slow-motion disk-full outage. Budgeted by bytes, evicted oldest-first,
+# and a cache hit refreshes a file's age so the working set survives.
+
+import os
+import time
+
+
+def _age(path, seconds_ago):
+    old = time.time() - seconds_ago
+    os.utime(path, (old, old))
+
+
+def test_writing_past_the_budget_evicts_the_oldest(tmp_path):
+    cache = AudioCache(tmp_path, max_bytes=300)
+    for name, age in (("a", 300), ("b", 200), ("c", 100)):
+        cache.write(name, "wav", b"x" * 100)
+        _age(cache.path(name, "wav"), age)
+
+    cache.write("d", "wav", b"x" * 100)  # total would be 400 > 300
+
+    assert not cache.has("a", "wav")  # the oldest paid for it
+    assert cache.has("b", "wav") and cache.has("c", "wav") and cache.has("d", "wav")
+
+
+def test_a_cache_hit_refreshes_a_files_age(tmp_path):
+    cache = AudioCache(tmp_path, max_bytes=300)
+    for name, age in (("a", 300), ("b", 200), ("c", 100)):
+        cache.write(name, "wav", b"x" * 100)
+        _age(cache.path(name, "wav"), age)
+
+    assert cache.has("a", "wav")  # a hit: "a" is in active use
+    cache.write("d", "wav", b"x" * 100)
+
+    assert cache.has("a", "wav")  # protected by the hit
+    assert not cache.has("b", "wav")  # now the oldest untouched
+
+
+def test_the_file_just_written_is_never_evicted(tmp_path):
+    # Even a track bigger than the whole budget must land: the caller is
+    # about to serve it. The cache runs over budget with one file rather
+    # than break the request that just paid for the render.
+    cache = AudioCache(tmp_path, max_bytes=50)
+    cache.write("big", "mp3", b"x" * 200)
+    assert cache.has("big", "mp3")
+
+
+def test_reading_also_refreshes_age(tmp_path):
+    cache = AudioCache(tmp_path, max_bytes=300)
+    for name, age in (("a", 300), ("b", 200), ("c", 100)):
+        cache.write(name, "wav", b"x" * 100)
+        _age(cache.path(name, "wav"), age)
+
+    cache.read("a", "wav")
+    cache.write("d", "wav", b"x" * 100)
+
+    assert cache.has("a", "wav")
+    assert not cache.has("b", "wav")
+
+
+def test_budget_comes_from_the_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUE_CACHE_MAX_MB", "7")
+    assert AudioCache(tmp_path).max_bytes == 7 * 1024 * 1024
+
+
+def test_budget_default_is_generous(tmp_path, monkeypatch):
+    monkeypatch.delenv("CUE_CACHE_MAX_MB", raising=False)
+    assert AudioCache(tmp_path).max_bytes == 500 * 1024 * 1024
