@@ -967,7 +967,7 @@ export default function Home() {
           backgrounds and don't need it). Keeps header/intro/stage-strip
           text legible over the cloud background without per-pixel luck. */}
       <div className="mx-auto w-full max-w-6xl px-6 pb-24 pt-10">
-        <div className="mb-8 rounded-lg border border-edge bg-mat/85 px-6 pb-6 pt-8 backdrop-blur-md sm:px-8">
+        <div className="mb-8 rounded-lg border border-edge bg-mat/88 px-6 pb-6 pt-8 backdrop-blur-md sm:px-8">
         {/* Header: the cue light means "we're live". */}
         <header className="mb-10 flex items-end justify-between gap-4">
           <div className="flex items-center gap-3">
