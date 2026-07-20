@@ -12,7 +12,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -29,6 +29,7 @@ from engine import Engine
 from fountain import characters, parse_fountain, to_cue_script
 from judge import TOLERANCE as JUDGE_TOLERANCE
 from judge import calibrate as judge_calibrate
+from limiter import RateLimiter
 from listen import profile
 import perform as perform_module
 from perform import arc_correlation, perform_line
@@ -73,6 +74,45 @@ brain_engine = BrainEngine([GroqBrain(), OllamaBrain(), KeywordBrain()])
 # Only ever serve files whose names look like our own hashes, never arbitrary
 # paths — this stops requests like /audio/../../secret.
 SAFE_AUDIO_NAME = re.compile(r"[a-f0-9]{64}\.(wav|mp3)")
+
+
+# --- Rate limits ---
+# BYOK protects the host's ElevenLabs credits, but every /direct, /perform,
+# /retake, /chat and /speak spends the HOST's Groq budget — a finite daily
+# pool one stranger could drain (we've measured how dead the app feels when
+# it's gone). Cloning burns real compute. Per-visitor sliding windows, and
+# the 429 carries a truthful Retry-After, the same contract Groq gives us.
+# CUE_RATE_LIMITS=off exists for test suites, not for production.
+
+
+def rate_limits_enabled(env=None) -> bool:
+    env = os.environ if env is None else env
+    return env.get("CUE_RATE_LIMITS", "on") != "off"
+
+
+RATE_LIMITS_ENABLED = rate_limits_enabled()
+brain_limiter = RateLimiter(limit=30, window_seconds=60)  # LLM-spending calls
+clone_limiter = RateLimiter(limit=3, window_seconds=60)  # heavy local compute
+
+
+def guard_rate(http_request: Request, limiter: RateLimiter) -> None:
+    if not RATE_LIMITS_ENABLED:
+        return
+    # Behind a proxy the client host is the proxy, which would pool every
+    # visitor into one bucket (and let one abuser starve them all) — so honor
+    # X-Forwarded-For's first hop. Yes, it's spoofable by a direct caller;
+    # rotating fake IPs still costs the abuser effort, and legit users behind
+    # the proxy stay unharmed. The trade is deliberate.
+    forwarded = http_request.headers.get("x-forwarded-for", "")
+    client = http_request.client.host if http_request.client else "unknown"
+    key = forwarded.split(",")[0].strip() or client
+    allowed, retry_after = limiter.allow(key)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="too many requests; give it a moment",
+            headers={"Retry-After": str(retry_after)},
+        )
 
 
 # --- Input limits ---
@@ -221,7 +261,10 @@ def status():
 
 
 @app.post("/speak")
-def speak(request: SpeakRequest, x_elevenlabs_key: str = Header(default="")):
+def speak(
+    request: SpeakRequest, http_request: Request, x_elevenlabs_key: str = Header(default="")
+):
+    guard_rate(http_request, brain_limiter)
     text = request.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
@@ -247,12 +290,13 @@ def speak(request: SpeakRequest, x_elevenlabs_key: str = Header(default="")):
 
 
 @app.post("/direct")
-def direct(request: DirectRequest):
+def direct(request: DirectRequest, http_request: Request):
     """Restyle a whole script under one direction. Parses the pasted block into
     speaker-attributed lines (`NAME: text`, or no speaker for a plain read) and
     interprets each line's text with the full script as context, so the direction
     can ramp across the arc. Brain only — no audio is rendered here, so this is
     fast and spends no ElevenLabs credits."""
+    guard_rate(http_request, brain_limiter)
     guard_direction(request.direction)
     guard_script_text(request.script)
     parsed = parse_script(request.script)
@@ -307,11 +351,12 @@ def render(request: RenderRequest, x_elevenlabs_key: str = Header(default="")):
 
 
 @app.post("/chat")
-def chat(request: ChatRequest):
+def chat(request: ChatRequest, http_request: Request):
     """The writer's room: chat with the brain to develop the material. Returns
     {message, script|null} — the script is the full current draft whenever the
     brain wrote or revised one. Only the LLM brains can write, so if none is
     reachable this is a plain error, not a silent fallback."""
+    guard_rate(http_request, brain_limiter)
     messages = [
         {"role": m.role, "content": m.content}
         for m in request.messages
@@ -434,13 +479,16 @@ class PerformRequest(BaseModel):
 
 
 @app.post("/perform")
-def perform(request: PerformRequest, x_elevenlabs_key: str = Header(default="")):
+def perform(
+    request: PerformRequest, http_request: Request, x_elevenlabs_key: str = Header(default="")
+):
     """The self-correcting read: plan the performance, render it, LISTEN to
     every line with the booth's DSP, and re-take the ones that missed the
     emotional target — a cheap re-roll first, then a re-direct where the brain
     rewrites the delivery knowing exactly how the take missed. Always ships
     the best take per line, with an honest per-take report. This is /direct +
     /read + /analyze + /retake wired into one director's loop."""
+    guard_rate(http_request, brain_limiter)
     guard_direction(request.direction)
     guard_script_text(request.script)
     parsed = parse_script(request.script)
@@ -551,6 +599,7 @@ def perform(request: PerformRequest, x_elevenlabs_key: str = Header(default=""))
 
 @app.post("/voice/clone")
 async def voice_clone(
+    http_request: Request,
     name: str = Form(...),
     consent: str = Form(...),
     files: list[UploadFile] = File(...),
@@ -559,6 +608,7 @@ async def voice_clone(
     machine. The sample is stored in the local clone registry and the voice
     speaks through Cue's local engine; no API key, no cloud, nothing leaves
     the computer. Explicit consent is required: your own voice only."""
+    guard_rate(http_request, clone_limiter)
     if consent.lower() != "true":
         raise HTTPException(
             status_code=400,
@@ -619,11 +669,12 @@ def analyze(request: AnalyzeRequest):
 
 
 @app.post("/retake")
-def retake(request: RetakeRequest):
+def retake(request: RetakeRequest, http_request: Request):
     """One line, one director's note, a new performance. The note is folded
     into that line's direction only (same convention as screenplay
     parentheticals), with the whole script still passed for arc context.
     Returns the fresh interpretation; the client renders it as the next take."""
+    guard_rate(http_request, brain_limiter)
     note = request.note.strip()
     if not note:
         raise HTTPException(status_code=400, detail="a note is required")
