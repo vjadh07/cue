@@ -5,7 +5,6 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 
-import { MAT_CLOUD } from "../mat-art";
 import { Tour } from "./tour";
 
 // Where the Python backend is listening. For now this is hard-coded.
@@ -154,10 +153,15 @@ function Panel({
   );
 }
 
-// The measuring strip along the top edge of the mat. Purely decorative.
+// The measuring strip along the top edge: a solid graphite bezel framing
+// the sky below it, so the tick numbers stay crisp no matter what cloud
+// would otherwise sit behind them.
 function Ruler() {
   return (
-    <div aria-hidden="true" className="flex h-5 select-none overflow-hidden border-b border-edge-strong">
+    <div
+      aria-hidden="true"
+      className="flex h-5 select-none overflow-hidden border-b border-edge-strong bg-mat"
+    >
       {Array.from({ length: 24 }).map((_, i) => (
         <span
           key={i}
@@ -166,21 +170,6 @@ function Ruler() {
           {i}
         </span>
       ))}
-    </div>
-  );
-}
-
-// Dither-art clouds printed faintly on the mat, behind the tools. The same art
-// is reused rotated, so the two masses read as different clouds.
-function MatClouds() {
-  return (
-    <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 hidden select-none overflow-hidden md:block">
-      <pre className="absolute -right-12 -top-8 font-mono text-[11px] leading-[13px] text-chalk/[0.1]">
-        {MAT_CLOUD}
-      </pre>
-      <pre className="absolute -bottom-10 -left-16 rotate-180 font-mono text-[10px] leading-[12px] text-chalk/[0.07]">
-        {MAT_CLOUD}
-      </pre>
     </div>
   );
 }
@@ -967,11 +956,15 @@ export default function Home() {
 
   return (
     <main className="relative z-[1] min-h-[100dvh]">
-      <MatClouds />
-      {/* The mat's printed ruler, along the top edge. */}
+      {/* The ruler along the top edge, over the sky. */}
       <Ruler />
 
+      {/* The readout: a frosted graphite strip over the sky, holding
+          everything before the tool panels (which have their own solid
+          backgrounds and don't need it). Keeps header/intro/stage-strip
+          text legible over the cloud background without per-pixel luck. */}
       <div className="mx-auto w-full max-w-6xl px-6 pb-24 pt-10">
+        <div className="mb-8 rounded-lg border border-edge bg-mat/75 px-6 pb-6 pt-8 backdrop-blur-md sm:px-8">
         {/* Header: the cue light means "we're live". */}
         <header className="mb-10 flex items-end justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -988,7 +981,7 @@ export default function Home() {
             </Link>
           </div>
           <div className="flex items-center gap-4">
-            {/* Printed on the mat like the maker's brand. */}
+            {/* Printed on the readout like the maker's brand. */}
             <span
               aria-hidden="true"
               className="hidden font-mono text-[10px] uppercase tracking-[0.18em] text-chalk/70 sm:block"
@@ -1111,6 +1104,7 @@ export default function Home() {
             </div>
           );
         })()}
+        </div>
 
         <div className="relative">
           <CornerMarks />

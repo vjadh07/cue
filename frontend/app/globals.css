@@ -1,25 +1,25 @@
 @import "tailwindcss";
 
-/* Cue is a control room: the whole interface sits on a graphite console
-   surface (the committed material that carries the identity), and panels
-   rest on it like hardware bolted to the desk. Locked dark on purpose — it
-   never flips with the OS setting. The amber cue-light is the one saturated
-   color in the room, the way a live-recording light is the one thing lit
-   on a dark console.
+/* Cue is a control room with a window on the sky: the studio looks out over
+   a soft, grainy cloudscape, and the console itself — panels, ruler, readout
+   strips — is frosted graphite glass sitting in front of it. Locked dark on
+   purpose — it never flips with the OS setting. The amber cue-light is the
+   one saturated color in the room, the way a live-recording light is the one
+   thing lit on a dark console.
 
    Contrast notes (measured, WCAG AA requires 4.5:1 body / 3:1 large):
    - --ink   on --panel   ≈ 17.4:1 (script text)
    - --ink-2 on --panel   ≈ 12.0:1 (secondary)
    - --ink-3 on --panel-2 ≈  8.1:1 (labels, placeholders)
-   - --chalk on --mat     ≈ 11.2:1 (markings printed on the console)
-   - --cue-ink on --cue   ≈ 10.9:1 (primary buttons) */
+   - --chalk on --mat     ≈ 11.2:1 (markings on a frosted console strip)
+   - --cue-ink on --cue   ≈ 10.9:1 (primary buttons)
+   Text sitting directly on the sky (not on a panel or a frosted strip) is
+   avoided — see the readout wrapper in the studio page. */
 :root {
-  /* The console surface and its printed markings: cool graphite, near-neutral
-     with the faintest blue-slate cast — brushed hardware, not a craft mat —
-     with a light grid etched into it. */
+  /* The console material: cool graphite, near-neutral with the faintest
+     blue-slate cast. Used as a translucent scrim (frosted glass) over the
+     sky, and as the base tone the whole dark palette is built from. */
   --mat: oklch(0.27 0.014 254);
-  --mat-line: oklch(0.97 0.006 252 / 0.1); /* fine grid */
-  --mat-line-strong: oklch(0.97 0.006 252 / 0.2); /* every 5th line */
   --chalk: oklch(0.9 0.012 252);
 
   /* Hardware bolted to the console goes DARKER still — near-black slabs
@@ -191,44 +191,42 @@
   }
 }
 
+/* The studio's sky: a generated cloudscape (layered gradients, no photo
+   asset — same generative approach as the ASCII sound-field on the lobby),
+   moody blue-grey with a soft diagonal light break, plus a grain layer so it
+   reads as weather, not a flat gradient. Bright patches are pushed to the
+   corners/edges on purpose — the centered content column stays over the
+   darker, denser cloud mass, which is what keeps text sitting directly on
+   this background (see the readout wrapper in the studio page) legible
+   without needing per-pixel contrast checking. Fixed so panels scroll over
+   it, like windows looking out at a sky that doesn't move. */
 body {
   color: var(--ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
-  /* The console itself: a fine etched grid, with a stronger line every 5th
-     cell, like measurements on a patch bay. Fixed so panels scroll over it. */
-  background-color: var(--mat);
+  background-color: oklch(0.24 0.025 254);
   background-image:
-    linear-gradient(var(--mat-line-strong) 1px, transparent 1px),
-    linear-gradient(90deg, var(--mat-line-strong) 1px, transparent 1px),
-    linear-gradient(var(--mat-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--mat-line) 1px, transparent 1px);
+    /* grain: tiled turbulence, blended in for photographic texture */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E"),
+    /* the light break: a soft diagonal band, upper-left toward center */
+    linear-gradient(155deg, transparent 22%, oklch(0.72 0.028 232 / 0.26) 42%, transparent 64%),
+    /* dense cloud mass, upper right */
+    radial-gradient(48% 40% at 82% 12%, oklch(0.15 0.03 258 / 0.6), transparent 72%),
+    /* bright sky break, top-left corner */
+    radial-gradient(46% 38% at 8% 4%, oklch(0.68 0.028 233 / 0.38), transparent 68%),
+    /* soft puffs, bottom edge, kept low so the content column stays clear */
+    radial-gradient(60% 30% at 45% 104%, oklch(0.34 0.03 250 / 0.5), transparent 65%),
+    /* base: vertical graphite-blue falloff */
+    linear-gradient(178deg, oklch(0.29 0.028 250) 0%, oklch(0.2 0.024 258) 100%);
+  background-blend-mode: overlay, normal, normal, normal, normal, normal;
+  background-repeat: repeat, no-repeat, no-repeat, no-repeat, no-repeat, no-repeat;
   background-size:
     180px 180px,
-    180px 180px,
-    36px 36px,
-    36px 36px;
+    cover,
+    cover,
+    cover,
+    cover,
+    cover;
   background-attachment: fixed;
-}
-
-/* Two faint crossing hairlines at 45°, like alignment guides etched into a
-   console. Decorative only. */
-body::before,
-body::after {
-  content: "";
-  position: fixed;
-  left: -60vmax;
-  top: 50%;
-  width: 220vmax;
-  height: 1px;
-  background: oklch(0.95 0.01 252 / 0.06);
-  pointer-events: none;
-  z-index: 0;
-}
-body::before {
-  transform: rotate(45deg);
-}
-body::after {
-  transform: rotate(-45deg);
 }
 
 /* Equalizer bars in the take panel. They animate only while audio is playing —
