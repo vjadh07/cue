@@ -1,37 +1,41 @@
 @import "tailwindcss";
 
-/* Cue is a precision workshop: the whole interface sits on a green
-   self-healing cutting mat (the committed surface that carries the identity),
-   and panels rest on it like tools. Locked dark on purpose — it never flips
-   with the OS setting.
+/* Cue is a control room: the whole interface sits on a graphite console
+   surface (the committed material that carries the identity), and panels
+   rest on it like hardware bolted to the desk. Locked dark on purpose — it
+   never flips with the OS setting. The amber cue-light is the one saturated
+   color in the room, the way a live-recording light is the one thing lit
+   on a dark console.
 
-   Contrast notes (WCAG AA):
-   - --ink   on --panel   ≈ 13:1  (script text)
-   - --ink-2 on --panel   ≈  9:1  (secondary)
-   - --ink-3 on --panel-2 ≈  6:1  (labels, placeholders)
-   - --chalk on --mat     ≈ 5.6:1 (markings printed on the mat)
-   - near-black on --cue  ≈  9:1  (primary buttons) */
+   Contrast notes (measured, WCAG AA requires 4.5:1 body / 3:1 large):
+   - --ink   on --panel   ≈ 17.4:1 (script text)
+   - --ink-2 on --panel   ≈ 12.0:1 (secondary)
+   - --ink-3 on --panel-2 ≈  8.1:1 (labels, placeholders)
+   - --chalk on --mat     ≈ 11.2:1 (markings printed on the console)
+   - --cue-ink on --cue   ≈ 10.9:1 (primary buttons) */
 :root {
-  /* The mat and its printed markings: a real cutting-mat green — visibly
-     green, like the classic Olfa mat — with the white printed grid. */
-  --mat: oklch(0.36 0.075 163);
-  --mat-line: oklch(0.97 0.02 165 / 0.13); /* fine grid */
-  --mat-line-strong: oklch(0.97 0.02 165 / 0.24); /* every 5th line */
-  --chalk: oklch(0.93 0.025 162);
+  /* The console surface and its printed markings: cool graphite, near-neutral
+     with the faintest blue-slate cast — brushed hardware, not a craft mat —
+     with a light grid etched into it. */
+  --mat: oklch(0.27 0.014 254);
+  --mat-line: oklch(0.97 0.006 252 / 0.1); /* fine grid */
+  --mat-line-strong: oklch(0.97 0.006 252 / 0.2); /* every 5th line */
+  --chalk: oklch(0.9 0.012 252);
 
-  /* Tools laid on the mat go DARK — near-black slabs sitting on the green,
-     like the dark tools in the reference photo; input wells darker still. */
-  --panel: oklch(0.22 0.028 170);
-  --panel-2: oklch(0.165 0.022 172);
-  --edge: oklch(0.9 0.04 165 / 0.22);
-  --edge-strong: oklch(0.9 0.04 165 / 0.42);
+  /* Hardware bolted to the console goes DARKER still — near-black slabs
+     sitting on the graphite; input wells darker still. */
+  --panel: oklch(0.175 0.014 255);
+  --panel-2: oklch(0.135 0.012 256);
+  --edge: oklch(0.88 0.016 255 / 0.16);
+  --edge-strong: oklch(0.88 0.016 255 / 0.34);
 
   /* Text */
-  --ink: oklch(0.97 0.008 165);
-  --ink-2: oklch(0.86 0.02 165);
-  --ink-3: oklch(0.74 0.03 165);
+  --ink: oklch(0.97 0.005 255);
+  --ink-2: oklch(0.85 0.012 255);
+  --ink-3: oklch(0.72 0.016 255);
 
-  /* The cue light — amber means "we're live". Bright enough to pop on green. */
+  /* The cue light — amber means "we're live". The one warm, saturated color
+     in an otherwise cool, neutral room, so it reads instantly. */
   --cue: oklch(0.86 0.155 84);
   --cue-bright: oklch(0.9 0.15 88);
   --cue-deep: oklch(0.65 0.13 78);
@@ -39,13 +43,13 @@
 
   --danger: oklch(0.76 0.16 25);
 
-  /* The lobby — the landing page is the daylight side of the mat world:
-     chalk-mint paper, dark ink, the same grid printed faintly. */
-  --paper: oklch(0.965 0.012 165);
-  --paper-line: oklch(0.45 0.06 165 / 0.09);
-  --paper-line-strong: oklch(0.45 0.06 165 / 0.16);
-  --ink-deep: oklch(0.26 0.03 170);
-  --ink-deep-2: oklch(0.45 0.03 168);
+  /* The lobby — the landing page is the daylight side of the same room:
+     cool paper, dark ink, the same grid printed faintly. */
+  --paper: oklch(0.965 0.004 255);
+  --paper-line: oklch(0.45 0.02 255 / 0.09);
+  --paper-line-strong: oklch(0.45 0.02 255 / 0.16);
+  --ink-deep: oklch(0.26 0.014 255);
+  --ink-deep-2: oklch(0.45 0.014 255);
   --cue-press: oklch(0.45 0.11 70); /* amber dark enough to read ON paper */
 
   --background: var(--mat);
@@ -77,8 +81,8 @@
   --font-mono: var(--font-geist-mono);
 }
 
-/* The lobby surface: no grid out here — the mat belongs to the studio. The
-   lobby is the air outside it: paper, aurora, and drifting sound-waves. */
+/* The lobby surface: no grid out here — the console belongs to the studio.
+   The lobby is the air outside it: paper and drifting sound-waves. */
 .lobby {
   color: var(--ink-deep);
   background-color: var(--paper);
@@ -190,8 +194,8 @@
 body {
   color: var(--ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
-  /* The mat itself: fine self-healing grid, with a stronger line every 5th
-     cell, exactly like the real thing. Fixed so tools scroll over the mat. */
+  /* The console itself: a fine etched grid, with a stronger line every 5th
+     cell, like measurements on a patch bay. Fixed so panels scroll over it. */
   background-color: var(--mat);
   background-image:
     linear-gradient(var(--mat-line-strong) 1px, transparent 1px),
@@ -206,8 +210,8 @@ body {
   background-attachment: fixed;
 }
 
-/* The mat's 45° bias guides: two faint crossing hairlines, like the printed
-   diagonals on a real cutting mat. Decorative only. */
+/* Two faint crossing hairlines at 45°, like alignment guides etched into a
+   console. Decorative only. */
 body::before,
 body::after {
   content: "";
@@ -216,7 +220,7 @@ body::after {
   top: 50%;
   width: 220vmax;
   height: 1px;
-  background: oklch(0.95 0.025 165 / 0.06);
+  background: oklch(0.95 0.01 252 / 0.06);
   pointer-events: none;
   z-index: 0;
 }

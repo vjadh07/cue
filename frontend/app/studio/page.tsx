@@ -993,7 +993,7 @@ export default function Home() {
               aria-hidden="true"
               className="hidden font-mono text-[10px] uppercase tracking-[0.18em] text-chalk/70 sm:block"
             >
-              Control room · mat nº 001 · 24″ × 18″
+              Control room · console nº 001 · 24-track
             </span>
             <button onClick={() => setTourOpen(true)} className={BTN_QUIET + " px-3 py-1.5"}>
               How it works
