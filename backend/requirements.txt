@@ -4,6 +4,7 @@ piper-tts
 httpx
 python-dotenv
 pydub
+numpy             # the booth DSP (listen.py) and performance loop (perform.py)
 python-multipart  # multipart uploads (the voice-clone recording)
 chatterbox-tts    # Cue's local voice engine: cloning + emotion, fully offline
 setuptools<81     # chatterbox's watermarker needs pkg_resources (removed in 81+)
